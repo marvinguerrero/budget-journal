@@ -1,0 +1,51 @@
+'use client'
+
+import { useState } from 'react'
+import { Plus } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ExpenseForm } from './ExpenseForm'
+import { ExpenseFormData } from '@/types'
+
+interface QuickAddButtonProps {
+  onAdd: (data: ExpenseFormData) => Promise<unknown>
+}
+
+export function QuickAddButton({ onAdd }: QuickAddButtonProps) {
+  const [open, setOpen] = useState(false)
+
+  const handleSubmit = async (data: ExpenseFormData) => {
+    await onAdd(data)
+    setOpen(false)
+  }
+
+  return (
+    <>
+      <Button
+        onClick={() => setOpen(true)}
+        size="lg"
+        className="fixed bottom-24 right-4 lg:bottom-8 lg:right-8 z-50 h-14 w-14 rounded-full shadow-lg shadow-primary/30 hover:shadow-primary/50 transition-all duration-300 hover:scale-110 p-0"
+      >
+        <Plus className="h-6 w-6" />
+        <span className="sr-only">Add expense</span>
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Add Expense</DialogTitle>
+          </DialogHeader>
+          <ExpenseForm
+            onSubmit={handleSubmit}
+            onCancel={() => setOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}

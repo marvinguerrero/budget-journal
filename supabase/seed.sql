@@ -1,0 +1,26 @@
+-- ============================================================
+-- Budget Journal – Sample Seed Data
+-- Replace 'YOUR_USER_UUID' with your actual Supabase user UUID
+-- ============================================================
+
+-- Sample expenses for current month (adjust user_id before running)
+-- INSERT INTO public.expenses (user_id, amount, category, note, payment_method) VALUES
+--   ('YOUR_USER_UUID', 250.00,  'Food',           'Lunch at SM Food Court',    'GCash'),
+--   ('YOUR_USER_UUID', 1200.00, 'Bills',           'Meralco electric bill',     'Bank Transfer'),
+--   ('YOUR_USER_UUID', 350.00,  'Transportation',  'Grab rides this week',      'GCash'),
+--   ('YOUR_USER_UUID', 85.00,   'Food',            'Coffee and muffin',         'Cash'),
+--   ('YOUR_USER_UUID', 2500.00, 'Shopping',        'Uniqlo haul',               'Credit Card'),
+--   ('YOUR_USER_UUID', 450.00,  'Entertainment',   'Netflix + Spotify subs',    'Credit Card'),
+--   ('YOUR_USER_UUID', 800.00,  'Health',          'Vitamins and supplements',  'GCash'),
+--   ('YOUR_USER_UUID', 120.00,  'Food',            'Mang Inasal dinner',        'Cash'),
+--   ('YOUR_USER_UUID', 600.00,  'Transportation',  'Gas fill-up',               'Cash'),
+--   ('YOUR_USER_UUID', 3500.00, 'Bills',           'Globe internet plan',       'GCash');
+
+-- Sample budgets (adjust user_id before running)
+-- INSERT INTO public.budgets (user_id, category, amount, month, year) VALUES
+--   ('YOUR_USER_UUID', 'Food',           5000.00, EXTRACT(MONTH FROM NOW()), EXTRACT(YEAR FROM NOW())),
+--   ('YOUR_USER_UUID', 'Transportation', 3000.00, EXTRACT(MONTH FROM NOW()), EXTRACT(YEAR FROM NOW())),
+--   ('YOUR_USER_UUID', 'Bills',          5000.00, EXTRACT(MONTH FROM NOW()), EXTRACT(YEAR FROM NOW())),
+--   ('YOUR_USER_UUID', 'Shopping',       4000.00, EXTRACT(MONTH FROM NOW()), EXTRACT(YEAR FROM NOW())),
+--   ('YOUR_USER_UUID', 'Entertainment',  1500.00, EXTRACT(MONTH FROM NOW()), EXTRACT(YEAR FROM NOW())),
+--   ('YOUR_USER_UUID', 'Health',         2000.00, EXTRACT(MONTH FROM NOW()), EXTRACT(YEAR FROM NOW()));

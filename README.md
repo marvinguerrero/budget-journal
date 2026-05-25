@@ -1,8 +1,97 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Budget Journal
+
+A modern, mobile-first personal finance journaling app built with Next.js 15, Supabase, and TypeScript.
+
+## Features
+
+- **Authentication** — Email/password & Google OAuth via Supabase Auth
+- **Dashboard** — Monthly overview with spending stats, charts, and recent transactions
+- **Expense Logging** — Ultra-fast expense entry with category picker and floating action button
+- **Expense History** — Searchable, filterable expense list with edit/delete
+- **Budget Tracking** — Category budgets with progress bars and overspending alerts
+- **Analytics** — Spending by category (bar chart), breakdown percentages, and auto-generated insights
+- **Settings** — Theme toggle (light/dark/system), profile view, logout
+- **Dark Mode** — Full dark theme support
+- **Mobile-first** — Bottom navigation, touch-friendly UI, responsive layout
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 15 (App Router) |
+| Language | TypeScript |
+| Styling | Tailwind CSS + shadcn/ui |
+| Backend/Auth | Supabase |
+| Database | PostgreSQL (Supabase) |
+| Charts | Recharts |
+| State | Zustand |
+| Deployment | Vercel |
 
 ## Getting Started
 
-First, run the development server:
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Set up Supabase
+
+1. Create a new project at [supabase.com](https://supabase.com)
+2. Go to **SQL Editor** and run `supabase/schema.sql`
+3. Enable **Google OAuth** in Authentication → Providers (optional)
+4. Copy your project URL and anon key
+
+### 3. Environment variables
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+### 4. Run locally
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000)
+
+---
+
+## Database Schema
+
+Run `supabase/schema.sql` in your Supabase SQL editor.
+
+Tables: `expenses`, `budgets`, `categories`
+
+All tables have Row Level Security (RLS) enabled — users can only access their own data.
+
+## Deployment (Vercel)
+
+```bash
+vercel --prod
+```
+
+Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in your Vercel project settings.
+
+## Project Structure
+
+```
+/app            - Next.js pages (login, dashboard, expenses, budgets, analytics, settings)
+/components     - Reusable UI components
+/lib/supabase   - Supabase client helpers
+/services       - CRUD service functions
+/hooks          - React hooks (useExpenses, useBudgets)
+/store          - Zustand state store
+/types          - TypeScript types
+/utils          - Formatters
+/supabase       - SQL schema & seed files
+```
+
+---
+
+## Dev server:
 
 ```bash
 npm run dev
