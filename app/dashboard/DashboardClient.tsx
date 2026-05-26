@@ -9,8 +9,10 @@ import { SpendingChart } from '@/components/dashboard/SpendingChart'
 import { CategoryPieChart } from '@/components/dashboard/CategoryPieChart'
 import { ExpenseItem } from '@/components/expenses/ExpenseItem'
 import { QuickAddButton } from '@/components/expenses/QuickAddButton'
+import { InsightSummary } from '@/components/budgets/InsightSummary'
 import { useExpenseStore } from '@/store/useExpenseStore'
 import { useExpenses } from '@/hooks/useExpenses'
+import { useCategories } from '@/hooks/useCategories'
 import { Wallet, TrendingDown, Calendar, Tag } from 'lucide-react'
 import { format } from 'date-fns'
 
@@ -29,8 +31,9 @@ export function DashboardClient({
   month,
   year,
 }: DashboardClientProps) {
-  const { setExpenses, setBudgets, expenses, budgets } = useExpenseStore()
+  const { setExpenses, setBudgets, expenses, budgets, categories } = useExpenseStore()
   const { addExpense, updateExpense, deleteExpense } = useExpenses(month, year)
+  useCategories()
 
   useEffect(() => {
     setExpenses(initialExpenses)
@@ -133,6 +136,8 @@ export function DashboardClient({
         <SpendingChart data={spendingTrend} />
         <CategoryPieChart data={categoryBreakdown} />
       </div>
+
+      <InsightSummary budgets={budgets} expenses={expenses} categories={categories} />
 
       <div className="rounded-2xl border border-border bg-card p-4">
         <div className="flex items-center justify-between mb-4">

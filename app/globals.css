@@ -119,6 +119,25 @@
   }
 }
 
+/* Mobile bottom-sheet: override Dialog's centered positioning.
+   Needs !important because base-ui Dialog uses transform for centering
+   and Tailwind utility ordering isn't guaranteed to win. */
+@media (max-width: 639px) {
+  .bottom-sheet-mobile {
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    transform: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    border-top-left-radius: 1.5rem !important;
+    border-top-right-radius: 1.5rem !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+  }
+}
+
 @layer utilities {
   .scrollbar-none {
     scrollbar-width: none;

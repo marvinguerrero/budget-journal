@@ -1,3 +1,12 @@
 export const dynamic = 'force-dynamic'
 
-export { default } from './RegisterClient'
+import { Suspense } from 'react'
+import { RegisterPageWrapper } from './RegisterPageWrapper'
+
+export default function RegisterPage() {
+  return (
+    <Suspense>
+      <RegisterPageWrapper />
+    </Suspense>
+  )
+}

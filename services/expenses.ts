@@ -12,6 +12,10 @@ export async function getExpenses(month?: number, year?: number): Promise<Expens
     const startDate = new Date(year, month - 1, 1).toISOString()
     const endDate = new Date(year, month, 0, 23, 59, 59).toISOString()
     query = query.gte('created_at', startDate).lte('created_at', endDate)
+  } else if (year) {
+    const startDate = new Date(year, 0, 1).toISOString()
+    const endDate = new Date(year, 11, 31, 23, 59, 59).toISOString()
+    query = query.gte('created_at', startDate).lte('created_at', endDate)
   }
 
   const { data, error } = await query

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useExpenseStore } from '@/store/useExpenseStore'
 import { getExpenses, createExpense, updateExpense, deleteExpense } from '@/services/expenses'
-import { getBudgets, createBudget } from '@/services/budgets'
+import { getBudgets, createBudget, updateBudget, deleteBudget } from '@/services/budgets'
 import { ExpenseFormData, BudgetFormData } from '@/types'
 import { getCurrentMonth } from '@/utils/format'
 import { toast } from 'sonner'
@@ -12,22 +12,18 @@ export function useExpenses(month?: number, year?: number) {
   const { expenses, setExpenses, addExpense, updateExpense: updateStore, removeExpense, isLoading, setLoading } = useExpenseStore()
   const [error, setError] = useState<string | null>(null)
 
-  const { month: currentMonth, year: currentYear } = getCurrentMonth()
-  const targetMonth = month || currentMonth
-  const targetYear = year || currentYear
-
   const fetchExpenses = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await getExpenses(targetMonth, targetYear)
+      const data = await getExpenses(month, year)
       setExpenses(data)
     } catch (err) {
       setError('Failed to load expenses')
     } finally {
       setLoading(false)
     }
-  }, [targetMonth, targetYear, setExpenses, setLoading])
+  }, [month, year, setExpenses, setLoading])
 
   useEffect(() => {
     fetchExpenses()
@@ -80,7 +76,7 @@ export function useExpenses(month?: number, year?: number) {
 }
 
 export function useBudgets(month?: number, year?: number) {
-  const { budgets, setBudgets, addBudget } = useExpenseStore()
+  const { budgets, setBudgets, addBudget, updateBudget: updateBudgetStore, removeBudget } = useExpenseStore()
   const [isLoading, setIsLoading] = useState(false)
 
   const { month: currentMonth, year: currentYear } = getCurrentMonth()
@@ -115,5 +111,35 @@ export function useBudgets(month?: number, year?: number) {
     }
   }
 
-  return { budgets, isLoading, refetch: fetchBudgets, addBudget: handleAddBudget }
+  const handleUpdateBudget = async (id: string, amount: number) => {
+    try {
+      const updated = await updateBudget(id, amount)
+      updateBudgetStore(id, updated)
+      toast.success('Budget updated!')
+      return updated
+    } catch {
+      toast.error('Failed to update budget')
+      throw new Error('Failed to update budget')
+    }
+  }
+
+  const handleDeleteBudget = async (id: string) => {
+    try {
+      await deleteBudget(id)
+      removeBudget(id)
+      toast.success('Budget removed')
+    } catch {
+      toast.error('Failed to remove budget')
+      throw new Error('Failed to remove budget')
+    }
+  }
+
+  return {
+    budgets,
+    isLoading,
+    refetch: fetchBudgets,
+    addBudget: handleAddBudget,
+    updateBudget: handleUpdateBudget,
+    deleteBudget: handleDeleteBudget,
+  }
 }

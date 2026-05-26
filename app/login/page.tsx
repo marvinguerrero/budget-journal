@@ -1,12 +1,12 @@
 export const dynamic = 'force-dynamic'
 
 import { Suspense } from 'react'
-import LoginClient from './LoginClient'
+import { LoginPageWrapper } from './LoginPageWrapper'
 
 export default function LoginPage() {
   return (
     <Suspense>
-      <LoginClient />
+      <LoginPageWrapper />
     </Suspense>
   )
 }

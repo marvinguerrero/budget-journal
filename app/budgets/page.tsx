@@ -20,26 +20,40 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useCategories } from '@/hooks/useCategories'
 import { DEFAULT_CATEGORIES } from '@/lib/constants'
 import { formatCurrency, getMonthName, getCurrentMonth } from '@/utils/format'
-import { Plus, Target } from 'lucide-react'
+import { computeBudgetInsights } from '@/lib/budgetInsights'
+import { Plus, Target, AlertCircle } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 
 export default function BudgetsPage() {
   const { month, year } = getCurrentMonth()
   const { expenses, addExpense } = useExpenses(month, year)
-  const { budgets, isLoading, addBudget } = useBudgets(month, year)
+  const { budgets, isLoading, addBudget, updateBudget, deleteBudget } = useBudgets(month, year)
+  const { categories } = useCategories()
   const [showAddBudget, setShowAddBudget] = useState(false)
-  const [category, setCategory] = useState(DEFAULT_CATEGORIES[0].name)
   const [amount, setAmount] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+
+  const allCategories = categories.length > 0 ? categories : DEFAULT_CATEGORIES.map((c, i) => ({ ...c, id: `d-${i}`, user_id: null, is_default: true, created_at: '' }))
 
   const totalBudget = budgets.reduce((sum, b) => sum + b.amount, 0)
   const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0)
   const totalRemaining = totalBudget - totalSpent
 
   const coveredCategories = new Set(budgets.map((b) => b.category))
-  const uncoveredCategories = DEFAULT_CATEGORIES.filter((c) => !coveredCategories.has(c.name))
+  const uncoveredCategories = allCategories.filter((c) => !coveredCategories.has(c.name))
+
+  const unbudgetedInsights = useMemo(
+    () =>
+      computeBudgetInsights(budgets, expenses, allCategories).filter(
+        (i) => i.status === 'unbudgeted' && i.spent > 0
+      ),
+    [budgets, expenses, allCategories]
+  )
+
+  const [category, setCategory] = useState(() => allCategories[0]?.name ?? DEFAULT_CATEGORIES[0].name)
 
   const handleAddBudget = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -133,8 +147,56 @@ export default function BudgetsPage() {
               key={budget.id}
               budget={budget}
               expenses={expenses}
+              onUpdate={updateBudget}
+              onDelete={deleteBudget}
             />
           ))}
+        </div>
+      )}
+
+      {/* Unbudgeted spending section */}
+      {!isLoading && unbudgetedInsights.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-muted-foreground" />
+            <h2 className="font-semibold text-sm">Unbudgeted Spending</h2>
+          </div>
+          <div className="space-y-2">
+            {unbudgetedInsights.map((insight) => (
+              <div
+                key={insight.category}
+                className="flex items-center justify-between p-3.5 rounded-2xl border border-border bg-card gap-3"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0"
+                    style={{ backgroundColor: insight.color + '18' }}
+                  >
+                    {insight.icon}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm">{insight.category}</p>
+                    <p className="text-xs text-muted-foreground">No budget set</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <p className="font-bold text-sm tabular-nums">{formatCurrency(insight.spent)}</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 rounded-lg text-xs px-2"
+                    onClick={() => {
+                      setCategory(insight.category)
+                      setShowAddBudget(true)
+                    }}
+                  >
+                    <Plus className="w-3 h-3 mr-1" />
+                    Set
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -151,7 +213,7 @@ export default function BudgetsPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(uncoveredCategories.length > 0 ? uncoveredCategories : DEFAULT_CATEGORIES).map((cat) => (
+                  {(uncoveredCategories.length > 0 ? uncoveredCategories : allCategories).map((cat) => (
                     <SelectItem key={cat.name} value={cat.name}>
                       {cat.icon} {cat.name}
                     </SelectItem>

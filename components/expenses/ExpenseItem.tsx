@@ -17,6 +17,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ExpenseForm } from './ExpenseForm'
+import { BottomSheet } from '@/components/common/BottomSheet'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +30,7 @@ interface ExpenseItemProps {
 
 export function ExpenseItem({ expense, onUpdate, onDelete }: ExpenseItemProps) {
   const [editOpen, setEditOpen] = useState(false)
+  const isMobile = useIsMobile()
   const icon = CATEGORY_ICONS[expense.category] || '📦'
   const color = CATEGORY_COLORS[expense.category] || '#6B7280'
 
@@ -91,11 +94,8 @@ export function ExpenseItem({ expense, onUpdate, onDelete }: ExpenseItemProps) {
         </div>
       </div>
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-md rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold">Edit Expense</DialogTitle>
-          </DialogHeader>
+      {isMobile ? (
+        <BottomSheet open={editOpen} onClose={() => setEditOpen(false)} title="Edit Expense">
           <ExpenseForm
             onSubmit={handleUpdate}
             onCancel={() => setEditOpen(false)}
@@ -108,8 +108,28 @@ export function ExpenseItem({ expense, onUpdate, onDelete }: ExpenseItemProps) {
             }}
             isEditing
           />
-        </DialogContent>
-      </Dialog>
+        </BottomSheet>
+      ) : (
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="sm:max-w-md rounded-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold">Edit Expense</DialogTitle>
+            </DialogHeader>
+            <ExpenseForm
+              onSubmit={handleUpdate}
+              onCancel={() => setEditOpen(false)}
+              initialData={{
+                amount: expense.amount,
+                category: expense.category,
+                note: expense.note,
+                payment_method: expense.payment_method,
+                created_at: expense.created_at,
+              }}
+              isEditing
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   )
 }

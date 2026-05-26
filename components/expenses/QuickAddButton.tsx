@@ -9,8 +9,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { BottomSheet } from '@/components/common/BottomSheet'
 import { ExpenseForm } from './ExpenseForm'
 import { ExpenseFormData } from '@/types'
+import { useIsMobile } from '@/hooks/useIsMobile'
 
 interface QuickAddButtonProps {
   onAdd: (data: ExpenseFormData) => Promise<unknown>
@@ -18,11 +20,16 @@ interface QuickAddButtonProps {
 
 export function QuickAddButton({ onAdd }: QuickAddButtonProps) {
   const [open, setOpen] = useState(false)
+  const isMobile = useIsMobile()
 
   const handleSubmit = async (data: ExpenseFormData) => {
     await onAdd(data)
     setOpen(false)
   }
+
+  const form = (
+    <ExpenseForm onSubmit={handleSubmit} onCancel={() => setOpen(false)} />
+  )
 
   return (
     <>
@@ -35,17 +42,20 @@ export function QuickAddButton({ onAdd }: QuickAddButtonProps) {
         <span className="sr-only">Add expense</span>
       </Button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold">Add Expense</DialogTitle>
-          </DialogHeader>
-          <ExpenseForm
-            onSubmit={handleSubmit}
-            onCancel={() => setOpen(false)}
-          />
-        </DialogContent>
-      </Dialog>
+      {isMobile ? (
+        <BottomSheet open={open} onClose={() => setOpen(false)} title="Add Expense">
+          {form}
+        </BottomSheet>
+      ) : (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent className="sm:max-w-md rounded-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold">Add Expense</DialogTitle>
+            </DialogHeader>
+            {form}
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   )
 }

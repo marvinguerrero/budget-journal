@@ -62,7 +62,6 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             className="pl-9 h-14 text-2xl font-bold text-center tracking-tight border-2 focus-visible:ring-0 focus-visible:border-primary rounded-xl"
-            autoFocus
             required
           />
         </div>
