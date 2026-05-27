@@ -3,12 +3,13 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, Receipt, Target, PieChart, Settings } from 'lucide-react'
+import { LayoutDashboard, Receipt, Target, Users, PieChart, Settings } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
   { href: '/expenses', label: 'Expenses', icon: Receipt },
   { href: '/budgets', label: 'Budget', icon: Target },
+  { href: '/shared', label: 'Shared', icon: Users },
   { href: '/analytics', label: 'Analytics', icon: PieChart },
   { href: '/settings', label: 'Settings', icon: Settings },
 ]

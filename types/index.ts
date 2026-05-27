@@ -4,6 +4,53 @@ export interface User {
   created_at: string
 }
 
+export interface SharedGroup {
+  id: string
+  name: string
+  emoji: string
+  owner_id: string
+  created_at: string
+}
+
+export interface SharedGroupMember {
+  id: string
+  group_id: string
+  user_id: string
+  email: string
+  can_edit_budget: boolean
+  can_invite_members: boolean
+  created_at: string
+}
+
+export interface PermissionRequest {
+  id: string
+  group_id: string
+  user_id: string
+  user_email: string
+  type: 'edit_access' | 'invite_permission'
+  status: 'pending' | 'approved' | 'rejected'
+  created_at: string
+}
+
+export interface SharedBudget {
+  id: string
+  group_id: string
+  category: string
+  amount: number
+  created_at: string
+}
+
+export interface SharedExpense {
+  id: string
+  group_id: string
+  user_id: string
+  user_email: string
+  category: string
+  amount: number
+  note: string
+  created_at: string
+}
+
 export interface Expense {
   id: string
   user_id: string

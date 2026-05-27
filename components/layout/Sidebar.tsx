@@ -10,12 +10,14 @@ import {
   Target,
   Settings,
   Wallet,
+  Users,
 } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/expenses', label: 'Expenses', icon: Receipt },
   { href: '/budgets', label: 'Budgets', icon: Target },
+  { href: '/shared', label: 'Shared', icon: Users },
   { href: '/analytics', label: 'Analytics', icon: PieChart },
   { href: '/settings', label: 'Settings', icon: Settings },
 ]
