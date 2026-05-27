@@ -40,6 +40,15 @@ export interface SharedBudget {
   created_at: string
 }
 
+export interface GroupMessage {
+  id: string
+  group_id: string
+  user_id: string
+  user_email: string
+  message: string
+  created_at: string
+}
+
 export interface SharedExpense {
   id: string
   group_id: string

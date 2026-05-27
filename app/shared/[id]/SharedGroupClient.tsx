@@ -22,6 +22,7 @@ import { MemberCapabilities, resolveCapabilities } from '@/lib/permissions'
 import { MembersSection } from '@/components/shared/MembersSection'
 import { SharedBudgetProgress } from '@/components/shared/SharedBudgetProgress'
 import { SharedExpenseItem } from '@/components/shared/SharedExpenseItem'
+import { GroupChat } from '@/components/shared/GroupChat'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -80,6 +81,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const [isLoading, setIsLoading] = useState(true)
 
   // dialog open states
+  const [activeTab, setActiveTab] = useState<'overview' | 'chat'>('overview')
   const [showAddExpense, setShowAddExpense] = useState(false)
   const [showAddBudget, setShowAddBudget] = useState(false)
   const [showInvite, setShowInvite] = useState(false)
@@ -506,6 +508,32 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         ))}
       </div>
 
+      {/* ── Tab switcher ── */}
+      <div className="flex gap-1 p-1 rounded-xl bg-muted">
+        {(['overview', 'chat'] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              'flex-1 h-8 rounded-lg text-sm font-medium transition-colors capitalize',
+              activeTab === tab
+                ? 'bg-background shadow-sm text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {tab === 'chat' ? '💬 Chat' : 'Overview'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'chat' && (
+        <GroupChat groupId={groupId} currentUserId={currentUserId} />
+      )}
+
+      {activeTab === 'overview' && (
+      <>
+
       {/* ── Members & Roles ── */}
       <MembersSection
         ownerEmail={ownerEmail}
@@ -606,6 +634,9 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         <Plus className="h-6 w-6" />
         <span className="sr-only">Add shared expense</span>
       </Button>
+
+      </> /* end overview tab */
+      )}
 
       {/* ── Add Expense — mobile sheet / desktop dialog ── */}
       {isMobile ? (

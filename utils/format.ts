@@ -36,3 +36,16 @@ export function getCurrentMonth(): { month: number; year: number } {
 export function getDaysInMonth(month: number, year: number): number {
   return new Date(year, month, 0).getDate()
 }
+
+export function formatChatTime(dateString: string): string {
+  const date = new Date(dateString)
+  const now = new Date()
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  if (isToday) {
+    return new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true }).format(date)
+  }
+  return new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(date)
+}
