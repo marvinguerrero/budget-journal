@@ -14,6 +14,7 @@ import { InsightSummary } from '@/components/budgets/InsightSummary'
 import { useExpenseStore } from '@/store/useExpenseStore'
 import { useExpenses } from '@/hooks/useExpenses'
 import { useCategories } from '@/hooks/useCategories'
+import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { Wallet, TrendingDown, Calendar, Tag, TrendingUp } from 'lucide-react'
 import { format } from 'date-fns'
 
@@ -21,7 +22,6 @@ interface DashboardClientProps {
   initialExpenses: Expense[]
   initialBudgets: Budget[]
   initialIncomeEntries: IncomeEntry[]
-  initialAccounts: FinancialAccount[]
   userEmail: string
   month: number
   year: number
@@ -31,7 +31,6 @@ export function DashboardClient({
   initialExpenses,
   initialBudgets,
   initialIncomeEntries,
-  initialAccounts,
   userEmail,
   month,
   year,
@@ -39,6 +38,7 @@ export function DashboardClient({
   const { setExpenses, setBudgets, expenses, budgets, categories } = useExpenseStore()
   const { addExpense, updateExpense, deleteExpense } = useExpenses(month, year)
   useCategories()
+  const { accounts, totalBalance } = useFinancialAccounts()
 
   useEffect(() => {
     setExpenses(initialExpenses)
@@ -48,11 +48,6 @@ export function DashboardClient({
   const totalIncome = useMemo(
     () => initialIncomeEntries.reduce((s, e) => s + e.amount, 0),
     [initialIncomeEntries]
-  )
-
-  const totalBalance = useMemo(
-    () => initialAccounts.reduce((s, a) => s + a.balance, 0),
-    [initialAccounts]
   )
 
   const accountTypeLabel = (type: FinancialAccount['type']) =>
@@ -120,7 +115,7 @@ export function DashboardClient({
       </div>
 
       {/* Accounts overview */}
-      {initialAccounts.length > 0 && (
+      {accounts.length > 0 && (
         <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -133,7 +128,7 @@ export function DashboardClient({
             </div>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
-            {initialAccounts.map((acc) => (
+            {accounts.map((acc) => (
               <div
                 key={acc.id}
                 className="flex items-center gap-2.5 p-2.5 rounded-xl bg-accent/40 border border-border/50"
@@ -267,6 +262,7 @@ export function DashboardClient({
                 expense={expense}
                 onUpdate={updateExpense}
                 onDelete={deleteExpense}
+                accounts={accounts}
               />
             ))}
           </div>

@@ -194,6 +194,25 @@ export interface PaymentMethodFormData {
   emoji: string
 }
 
+export interface AccountTransfer {
+  id: string
+  user_id: string
+  from_account_id: string
+  to_account_id: string
+  amount: number
+  note: string
+  transferred_at: string
+  created_at: string
+}
+
+export interface AccountTransferFormData {
+  from_account_id: string
+  to_account_id: string
+  amount: number
+  note: string
+  transferred_at: string
+}
+
 export interface DashboardStats {
   totalExpenses: number
   totalBudget: number

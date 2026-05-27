@@ -17,6 +17,7 @@ import {
 import { DEFAULT_CATEGORIES } from '@/lib/constants'
 import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
 import { exportExpensesToExcel } from '@/utils/exportExcel'
+import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { Search, X, Download } from 'lucide-react'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
@@ -39,6 +40,7 @@ export default function ExpensesPage() {
   const targetYear = year !== 'all' ? Number(year) : undefined
 
   const { expenses, isLoading, addExpense, updateExpense, deleteExpense } = useExpenses(targetMonth, targetYear)
+  const { accounts } = useFinancialAccounts()
 
   const daysInMonth = month !== 'all' && year !== 'all'
     ? getDaysInMonth(Number(month), Number(year))
@@ -216,6 +218,7 @@ export default function ExpensesPage() {
               expense={expense}
               onUpdate={updateExpense}
               onDelete={deleteExpense}
+              accounts={accounts}
             />
           ))}
         </div>
