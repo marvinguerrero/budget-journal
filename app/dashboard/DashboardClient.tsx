@@ -2,7 +2,7 @@
 
 import { useMemo, useEffect } from 'react'
 import { Expense, Budget, IncomeEntry, FinancialAccount } from '@/types'
-import { ACCOUNT_TYPES } from '@/lib/constants'
+import { ACCOUNT_TYPES, isLiabilityType } from '@/lib/constants'
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/constants'
 import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
 import { StatsCard } from '@/components/dashboard/StatsCard'
@@ -38,7 +38,10 @@ export function DashboardClient({
   const { setExpenses, setBudgets, expenses, budgets, categories } = useExpenseStore()
   const { addExpense, updateExpense, deleteExpense } = useExpenses(month, year)
   useCategories()
-  const { accounts, totalBalance } = useFinancialAccounts()
+  const { accounts } = useFinancialAccounts()
+  const totalAssets      = useMemo(() => accounts.filter((a) => !isLiabilityType(a.type)).reduce((s, a) => s + a.balance, 0), [accounts])
+  const totalLiabilities = useMemo(() => accounts.filter((a) => isLiabilityType(a.type)).reduce((s, a) => s + Math.abs(a.balance), 0), [accounts])
+  const netWorth         = totalAssets - totalLiabilities
 
   useEffect(() => {
     setExpenses(initialExpenses)
@@ -52,6 +55,18 @@ export function DashboardClient({
 
   const accountTypeLabel = (type: FinancialAccount['type']) =>
     ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? type
+
+  const typeSummaries = useMemo(() =>
+    ACCOUNT_TYPES
+      .map(({ value, label, emoji, category }) => {
+        const group = accounts.filter((a) => a.type === value)
+        const total = group.reduce((s, a) =>
+          isLiabilityType(a.type) ? s + Math.abs(a.balance) : s + a.balance, 0)
+        return { value, label, emoji, category, total, count: group.length }
+      })
+      .filter((t) => t.count > 0),
+    [accounts]
+  )
 
   const stats = useMemo(() => {
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
@@ -123,10 +138,44 @@ export function DashboardClient({
               <p className="text-sm font-semibold">My Accounts</p>
             </div>
             <div className="text-right">
-              <p className="text-sm font-bold tabular-nums">{formatCurrency(totalBalance)}</p>
-              <p className="text-[10px] text-muted-foreground">total balance</p>
+              <p className="text-sm font-bold tabular-nums">{formatCurrency(netWorth)}</p>
+              <p className="text-[10px] text-muted-foreground">net worth</p>
             </div>
           </div>
+
+          {/* Assets / Liabilities split */}
+          {totalLiabilities > 0 && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-xl bg-emerald-500/10 p-2.5">
+                <p className="text-[10px] text-muted-foreground">Assets</p>
+                <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{formatCurrency(totalAssets)}</p>
+              </div>
+              <div className="rounded-xl bg-rose-500/10 p-2.5">
+                <p className="text-[10px] text-muted-foreground">Liabilities</p>
+                <p className="text-sm font-bold text-rose-600 dark:text-rose-400 tabular-nums">{formatCurrency(totalLiabilities)} owed</p>
+              </div>
+            </div>
+          )}
+
+          {/* Per-type summary chips */}
+          {typeSummaries.length > 1 && (
+            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide -mx-1">
+              {typeSummaries.map(({ value, label, emoji, category, total }) => (
+                <a key={value} href="/activity/accounts"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-accent/50 border border-border/50 hover:bg-accent transition-colors"
+                >
+                  <span className="text-base">{emoji}</span>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-none">{label}</p>
+                    <p className={`text-xs font-bold tabular-nums leading-tight ${category === 'liability' && total > 0 ? 'text-rose-600 dark:text-rose-400' : ''}`}>
+                      {category === 'liability' && total > 0 ? `${formatCurrency(total)} owed` : formatCurrency(total)}
+                    </p>
+                  </div>
+                </a>
+              ))}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
             {accounts.map((acc) => (
               <div
@@ -146,8 +195,8 @@ export function DashboardClient({
               </div>
             ))}
           </div>
-          <a href="/settings" className="block text-center text-xs text-primary font-medium hover:underline pt-0.5">
-            Manage accounts →
+          <a href="/activity/accounts" className="block text-center text-xs text-primary font-medium hover:underline pt-0.5">
+            View all accounts →
           </a>
         </div>
       )}

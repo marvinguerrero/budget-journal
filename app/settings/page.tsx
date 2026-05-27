@@ -20,9 +20,12 @@ import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { Sun, Moon, Monitor, LogOut, User, Palette, Layers, Trash2, Pencil, Wallet } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
-import { ACCOUNT_TYPES, PRESET_EMOJIS_ACCOUNTS } from '@/lib/constants'
+import { ACCOUNT_TYPES, PRESET_EMOJIS_ACCOUNTS, isLiabilityType } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
 import type { AccountType } from '@/types'
+
+const ASSET_TYPES  = ACCOUNT_TYPES.filter((t) => t.category === 'asset')
+const LIAB_TYPES   = ACCOUNT_TYPES.filter((t) => t.category === 'liability')
 
 const THEMES = [
   { value: 'light', label: 'Light', icon: Sun },
@@ -61,19 +64,23 @@ export default function SettingsPage() {
     setEditAccName(acc.name)
     setEditAccEmoji(acc.emoji)
     setEditAccType(acc.type)
-    setEditAccBalance(String(acc.balance))
+    // Liabilities stored as negative — show abs value for editing
+    setEditAccBalance(String(Math.abs(acc.balance)))
   }
 
   const handleCreateAcc = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSavingAcc(true)
+    const rawBalance = parseFloat(accBalance) || 0
+    // Liabilities stored as negative (debt owed)
+    const balance = isLiabilityType(accType) ? -(Math.abs(rawBalance)) : rawBalance
     try {
       await addAccount({
         name: accName.trim(),
         emoji: accEmoji,
         color: '#3B82F6',
         type: accType,
-        balance: parseFloat(accBalance) || 0,
+        balance,
       })
       setShowCreateAcc(false)
       setAccName('')
@@ -89,12 +96,14 @@ export default function SettingsPage() {
     e.preventDefault()
     if (!editingAcc) return
     setIsSavingAcc(true)
+    const rawBalance = parseFloat(editAccBalance) || 0
+    const balance = isLiabilityType(editAccType) ? -(Math.abs(rawBalance)) : rawBalance
     try {
       await editAccount(editingAcc, {
         name: editAccName.trim(),
         emoji: editAccEmoji,
         type: editAccType,
-        balance: parseFloat(editAccBalance) || 0,
+        balance,
       })
       setEditingAcc(null)
     } finally {
@@ -310,9 +319,14 @@ export default function SettingsPage() {
                   </div>
                   <span className={cn(
                     'text-sm font-bold tabular-nums mr-1',
-                    acc.balance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                    isLiabilityType(acc.type)
+                      ? acc.balance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
+                      : acc.balance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
                   )}>
-                    {formatCurrency(acc.balance)}
+                    {isLiabilityType(acc.type)
+                      ? acc.balance < 0 ? `${formatCurrency(Math.abs(acc.balance))} owed` : 'No debt'
+                      : formatCurrency(acc.balance)
+                    }
                   </span>
                   <button
                     type="button"
@@ -373,18 +387,28 @@ export default function SettingsPage() {
               <Select value={accType} onValueChange={(v: string | null) => v && setAccType(v as AccountType)}>
                 <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {ACCOUNT_TYPES.map((t) => (
+                  <SelectItem value="__asset_header__" disabled className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Assets</SelectItem>
+                  {ASSET_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>{t.emoji} {t.label}</SelectItem>
+                  ))}
+                  <SelectItem value="__liab_header__" disabled className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mt-1">Liabilities</SelectItem>
+                  {LIAB_TYPES.map((t) => (
                     <SelectItem key={t.value} value={t.value}>{t.emoji} {t.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label className="text-sm font-semibold">Current Balance (₱)</Label>
+              <Label className="text-sm font-semibold">
+                {isLiabilityType(accType) ? 'Current Debt (₱)' : 'Current Balance (₱)'}
+              </Label>
+              {isLiabilityType(accType) && (
+                <p className="text-[10px] text-muted-foreground">Enter amount currently owed (positive number)</p>
+              )}
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
                 <Input
-                  type="number" inputMode="decimal" step="0.01"
+                  type="number" inputMode="decimal" step="0.01" min="0"
                   placeholder="0.00" value={accBalance}
                   onChange={(e) => setAccBalance(e.target.value)}
                   className="pl-7 h-11 rounded-xl"
@@ -446,11 +470,16 @@ export default function SettingsPage() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label className="text-sm font-semibold">Balance (₱)</Label>
+              <Label className="text-sm font-semibold">
+                {isLiabilityType(editAccType) ? 'Current Debt (₱)' : 'Current Balance (₱)'}
+              </Label>
+              {isLiabilityType(editAccType) && (
+                <p className="text-[10px] text-muted-foreground">Enter amount currently owed (positive number)</p>
+              )}
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
                 <Input
-                  type="number" inputMode="decimal" step="0.01"
+                  type="number" inputMode="decimal" step="0.01" min="0"
                   placeholder="0.00" value={editAccBalance}
                   onChange={(e) => setEditAccBalance(e.target.value)}
                   className="pl-7 h-11 rounded-xl"

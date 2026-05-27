@@ -55,13 +55,20 @@ export const PRESET_EMOJIS_INCOME = [
 ]
 
 export const ACCOUNT_TYPES = [
-  { value: 'cash',       label: 'Cash',        emoji: '💵' },
-  { value: 'bank',       label: 'Bank',        emoji: '🏦' },
-  { value: 'ewallet',    label: 'E-Wallet',    emoji: '📱' },
-  { value: 'credit',     label: 'Credit Card', emoji: '💳' },
-  { value: 'savings',    label: 'Savings',     emoji: '🏧' },
-  { value: 'investment', label: 'Investment',  emoji: '📈' },
+  { value: 'cash',       label: 'Cash',        emoji: '💵', category: 'asset'     },
+  { value: 'bank',       label: 'Bank',        emoji: '🏦', category: 'asset'     },
+  { value: 'ewallet',    label: 'E-Wallet',    emoji: '📱', category: 'asset'     },
+  { value: 'savings',    label: 'Savings',     emoji: '🏧', category: 'asset'     },
+  { value: 'investment', label: 'Investment',  emoji: '📈', category: 'asset'     },
+  { value: 'credit',     label: 'Credit Card', emoji: '💳', category: 'liability' },
+  { value: 'loan',       label: 'Loan',        emoji: '💸', category: 'liability' },
 ] as const
+
+export const LIABILITY_ACCOUNT_TYPES = ['credit', 'loan'] as const
+
+export function isLiabilityType(type: string): boolean {
+  return (LIABILITY_ACCOUNT_TYPES as readonly string[]).includes(type)
+}
 
 export const PRESET_EMOJIS_ACCOUNTS = [
   '💵','🏦','📱','💳','🏧','📈','💰','🪙',

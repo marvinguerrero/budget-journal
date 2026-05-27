@@ -4,7 +4,8 @@ import { ActivityEntry } from '@/hooks/useAccountActivity'
 import { formatCurrency } from '@/utils/format'
 import { CATEGORY_ICONS } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
-import { Trash2, TrendingDown, TrendingUp, ArrowLeftRight, ArrowRight } from 'lucide-react'
+import { Trash2, TrendingDown, TrendingUp, ArrowLeftRight, ArrowRight, CreditCard } from 'lucide-react'
+import { isLiabilityType } from '@/lib/constants'
 
 interface ActivityFeedItemProps {
   entry: ActivityEntry
@@ -30,14 +31,20 @@ export function ActivityFeedItem({ entry, onDelete }: ActivityFeedItemProps) {
 
   if (entry.kind === 'expense') {
     const icon = CATEGORY_ICONS[entry.category] ?? '📦'
+    const isLiability = isLiabilityType(entry.account.type)
     return (
       <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-card border border-border">
-        <div className="w-9 h-9 rounded-xl bg-rose-500/10 flex items-center justify-center flex-shrink-0">
-          <TrendingDown className="w-4 h-4 text-rose-500" />
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isLiability ? 'bg-amber-500/10' : 'bg-rose-500/10'}`}>
+          {isLiability
+            ? <CreditCard className="w-4 h-4 text-amber-500" />
+            : <TrendingDown className="w-4 h-4 text-rose-500" />
+          }
         </div>
         <div className="flex-1 min-w-0 space-y-0.5">
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-rose-500">Expense</span>
+            <span className={`text-[10px] font-semibold uppercase tracking-wide ${isLiability ? 'text-amber-500' : 'text-rose-500'}`}>
+              {isLiability ? 'Credit Charge' : 'Expense'}
+            </span>
             <span className="text-[10px] text-muted-foreground">· {date}</span>
           </div>
           <p className="text-sm font-semibold truncate">{entry.note || entry.category}</p>
@@ -45,8 +52,8 @@ export function ActivityFeedItem({ entry, onDelete }: ActivityFeedItemProps) {
             {icon} {entry.category} · {entry.account.emoji} {entry.account.name}
           </p>
         </div>
-        <p className="text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400 flex-shrink-0">
-          -{formatCurrency(entry.amount)}
+        <p className={`text-sm font-bold tabular-nums flex-shrink-0 ${isLiability ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}`}>
+          {isLiability ? `+${formatCurrency(entry.amount)} debt` : `-${formatCurrency(entry.amount)}`}
         </p>
         {deleteBtn}
       </div>

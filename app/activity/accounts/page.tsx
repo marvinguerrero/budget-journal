@@ -6,7 +6,7 @@ import { useAccountActivity } from '@/hooks/useAccountActivity'
 import { deleteExpense } from '@/services/expenses'
 import { deleteIncomeEntry } from '@/services/incomeEntries'
 import { deleteAccountTransfer } from '@/services/accountTransfers'
-import { ACCOUNT_TYPES } from '@/lib/constants'
+import { ACCOUNT_TYPES, isLiabilityType } from '@/lib/constants'
 import { formatCurrency, getMonthName } from '@/utils/format'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select'
 import { ActivityFeedItem } from '@/components/accounts/ActivityFeedItem'
 import { ActivityEntry } from '@/hooks/useAccountActivity'
+import { FinancialAccount } from '@/types'
 import { Settings, TrendingUp, TrendingDown, ArrowLeftRight } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -34,19 +35,102 @@ const MONTHS = Array.from({ length: 12 }, (_, i) => ({
 }))
 const YEARS = ['2024', '2025', '2026']
 
-export default function AccountsPage() {
-  const { accounts, isLoading, totalBalance, reload: reloadAccounts } = useFinancialAccounts()
+// Helper: display balance for an account (liability shown as positive debt)
+function displayBalance(acc: FinancialAccount) {
+  if (isLiabilityType(acc.type)) {
+    return acc.balance < 0 ? `${formatCurrency(Math.abs(acc.balance))} owed` : 'No debt'
+  }
+  return formatCurrency(acc.balance)
+}
 
-  const [month, setMonth] = useState(String(now.getMonth() + 1))
-  const [year, setYear]   = useState(String(now.getFullYear()))
-  const [showTransfer, setShowTransfer] = useState(false)
+function balanceColor(acc: FinancialAccount) {
+  if (isLiabilityType(acc.type)) {
+    return acc.balance < 0
+      ? 'text-rose-600 dark:text-rose-400'
+      : 'text-emerald-600 dark:text-emerald-400'
+  }
+  return acc.balance >= 0
+    ? 'text-emerald-600 dark:text-emerald-400'
+    : 'text-rose-600 dark:text-rose-400'
+}
+
+export default function AccountsPage() {
+  const { accounts, isLoading, reload: reloadAccounts } = useFinancialAccounts()
+
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'asset' | 'liability'>('all')
+  const [typeFilter, setTypeFilter]         = useState('all')
+  const [month, setMonth]                   = useState(String(now.getMonth() + 1))
+  const [year,  setYear]                    = useState(String(now.getFullYear()))
+  const [showTransfer, setShowTransfer]     = useState(false)
   const isMobile = useIsMobile()
 
+  // ── Financial summary ─────────────────────────────────────────
+  const assetAccounts     = useMemo(() => accounts.filter((a) => !isLiabilityType(a.type)), [accounts])
+  const liabilityAccounts = useMemo(() => accounts.filter((a) => isLiabilityType(a.type)), [accounts])
+  const totalAssets       = useMemo(() => assetAccounts.reduce((s, a) => s + a.balance, 0), [assetAccounts])
+  const totalLiabilities  = useMemo(() => liabilityAccounts.reduce((s, a) => s + Math.abs(a.balance), 0), [liabilityAccounts])
+  const netWorth          = totalAssets - totalLiabilities
+
+  // ── Type summaries (filtered by category) ────────────────────
+  const typeSummaries = useMemo(() =>
+    ACCOUNT_TYPES
+      .filter((t) => categoryFilter === 'all' || t.category === categoryFilter)
+      .map(({ value, label, emoji, category }) => {
+        const group = accounts.filter((a) => a.type === value)
+        const total = group.reduce((s, a) =>
+          isLiabilityType(a.type) ? s + Math.abs(a.balance) : s + a.balance, 0)
+        return { value, label, emoji, category, count: group.length, total }
+      })
+      .filter((t) => t.count > 0),
+    [accounts, categoryFilter]
+  )
+
+  // ── Visible accounts ──────────────────────────────────────────
+  const visibleAccounts = useMemo(() => {
+    let list = accounts
+    if (categoryFilter !== 'all') list = list.filter((a) =>
+      categoryFilter === 'liability' ? isLiabilityType(a.type) : !isLiabilityType(a.type)
+    )
+    if (typeFilter !== 'all') list = list.filter((a) => a.type === typeFilter)
+    return list
+  }, [accounts, categoryFilter, typeFilter])
+
+  const activeType = ACCOUNT_TYPES.find((t) => t.value === typeFilter)
+
+  // ── Activity ─────────────────────────────────────────────────
   const parsedMonth = month === 'all' ? undefined : Number(month)
   const parsedYear  = year  === 'all' ? undefined : Number(year)
 
   const { entries, isLoading: activityLoading, reload: reloadActivity } =
     useAccountActivity(parsedMonth, parsedYear)
+
+  const visibleEntries = useMemo(() => {
+    if (typeFilter !== 'all') {
+      return entries.filter((e) => {
+        if (e.kind === 'expense' || e.kind === 'income') return e.account.type === typeFilter
+        return e.fromAccount.type === typeFilter || e.toAccount.type === typeFilter
+      })
+    }
+    if (categoryFilter !== 'all') {
+      return entries.filter((e) => {
+        const isLiab = (type: string) => isLiabilityType(type)
+        if (e.kind === 'expense' || e.kind === 'income') {
+          return categoryFilter === 'liability' ? isLiab(e.account.type) : !isLiab(e.account.type)
+        }
+        return true
+      })
+    }
+    return entries
+  }, [entries, typeFilter, categoryFilter])
+
+  const stats = useMemo(() => {
+    let totalOut = 0; let totalIn = 0
+    for (const e of visibleEntries) {
+      if (e.kind === 'expense') totalOut += e.amount
+      if (e.kind === 'income')  totalIn  += e.amount
+    }
+    return { totalOut, totalIn }
+  }, [visibleEntries])
 
   // ── Transfer form state ───────────────────────────────────────
   const [fromId,   setFromId]   = useState('')
@@ -56,15 +140,13 @@ export default function AccountsPage() {
   const [date,     setDate]     = useState(now.toISOString().slice(0, 10))
   const [isSaving, setIsSaving] = useState(false)
 
-  const typeLabel = (type: string) =>
-    ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? type
+  const availableTo = useMemo(() => accounts.filter((a) => a.id !== fromId), [accounts, fromId])
 
   const resetForm = () => {
     setFromId(''); setToId(''); setAmount(''); setNote('')
     setDate(now.toISOString().slice(0, 10))
   }
 
-  // ── Delete handler for all activity types ────────────────────
   const handleDelete = async (id: string, kind: ActivityEntry['kind']) => {
     try {
       if (kind === 'expense')  await deleteExpense(id)
@@ -78,10 +160,7 @@ export default function AccountsPage() {
     }
   }
 
-  // ── Transfer submit ───────────────────────────────────────────
-  const availableTo = useMemo(() => accounts.filter((a) => a.id !== fromId), [accounts, fromId])
-
-  const handleTransfer = async (e: React.FormEvent) => {
+  const handleTransfer = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const amt = parseFloat(amount)
     if (!fromId || !toId || !amt || amt < 0.01 || fromId === toId) return
@@ -107,87 +186,53 @@ export default function AccountsPage() {
     }
   }
 
-  // ── Summary stats ─────────────────────────────────────────────
-  const stats = useMemo(() => {
-    let totalOut = 0; let totalIn = 0
-    for (const e of entries) {
-      if (e.kind === 'expense') totalOut += e.amount
-      if (e.kind === 'income')  totalIn  += e.amount
-    }
-    return { totalOut, totalIn }
-  }, [entries])
-
-  // ── Transfer form JSX ─────────────────────────────────────────
+  // ── Transfer form ─────────────────────────────────────────────
   const transferForm = (
     <form onSubmit={handleTransfer} className="space-y-4 pt-2">
       <div className="space-y-2">
         <Label className="text-sm font-semibold">From Account</Label>
         <Select value={fromId} onValueChange={(v: string | null) => { setFromId(v ?? ''); if (v === toId) setToId('') }}>
-          <SelectTrigger className="h-11 rounded-xl">
-            <SelectValue placeholder="Select source account" />
-          </SelectTrigger>
+          <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Select source account" /></SelectTrigger>
           <SelectContent>
             {accounts.map((acc) => (
               <SelectItem key={acc.id} value={acc.id}>
-                {acc.emoji} {acc.name}
-                <span className="text-xs text-muted-foreground ml-2">{formatCurrency(acc.balance)}</span>
+                {acc.emoji} {acc.name} · {displayBalance(acc)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
-
       <div className="space-y-2">
         <Label className="text-sm font-semibold">To Account</Label>
         <Select value={toId} onValueChange={(v: string | null) => setToId(v ?? '')}>
-          <SelectTrigger className="h-11 rounded-xl">
-            <SelectValue placeholder="Select destination account" />
-          </SelectTrigger>
+          <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Select destination account" /></SelectTrigger>
           <SelectContent>
             {availableTo.map((acc) => (
               <SelectItem key={acc.id} value={acc.id}>
-                {acc.emoji} {acc.name}
-                <span className="text-xs text-muted-foreground ml-2">{formatCurrency(acc.balance)}</span>
+                {acc.emoji} {acc.name} · {displayBalance(acc)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
-
       <div className="space-y-2">
         <Label className="text-sm font-semibold">Amount (₱)</Label>
         <div className="relative">
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
-          <Input
-            type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00"
+          <Input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00"
             value={amount} onChange={(e) => setAmount(e.target.value)}
-            className="pl-8 h-12 text-lg font-semibold rounded-xl" required
-          />
+            className="pl-8 h-12 text-lg font-semibold rounded-xl" required />
         </div>
       </div>
-
       <div className="space-y-2">
         <Label className="text-sm font-semibold">Note (optional)</Label>
-        <Input
-          placeholder="e.g. savings top-up"
-          value={note} onChange={(e) => setNote(e.target.value)}
-          className="h-11 rounded-xl"
-        />
+        <Input placeholder="e.g. credit card payment" value={note} onChange={(e) => setNote(e.target.value)} className="h-11 rounded-xl" />
       </div>
-
       <div className="space-y-2">
         <Label className="text-sm font-semibold">Date</Label>
-        <Input
-          type="date" value={date} onChange={(e) => setDate(e.target.value)}
-          className="h-11 rounded-xl"
-        />
+        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-11 rounded-xl" />
       </div>
-
-      <Button
-        type="submit"
-        disabled={isSaving || !fromId || !toId || fromId === toId}
-        className="w-full h-12 rounded-xl text-base font-semibold mt-2"
-      >
+      <Button type="submit" disabled={isSaving || !fromId || !toId || fromId === toId} className="w-full h-12 rounded-xl text-base font-semibold mt-2">
         {isSaving ? 'Transferring…' : 'Transfer'}
       </Button>
     </form>
@@ -200,7 +245,10 @@ export default function AccountsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold">Accounts</h1>
-          <p className="text-sm text-muted-foreground">{accounts.length} account{accounts.length !== 1 ? 's' : ''}</p>
+          <p className="text-sm text-muted-foreground">
+            {visibleAccounts.length} account{visibleAccounts.length !== 1 ? 's' : ''}
+            {typeFilter !== 'all' && activeType ? ` · ${activeType.label}` : ''}
+          </p>
         </div>
         <Link href="/settings">
           <Button type="button" variant="outline" size="sm" className="h-9 rounded-xl gap-1.5 text-xs">
@@ -210,21 +258,98 @@ export default function AccountsPage() {
         </Link>
       </div>
 
-      {/* Total Balance Card */}
-      <div className="rounded-2xl bg-primary p-5 text-primary-foreground space-y-1">
-        <p className="text-xs font-medium opacity-75">Total Balance</p>
-        <p className="text-3xl font-bold tabular-nums tracking-tight">
-          {formatCurrency(totalBalance)}
-        </p>
-        <p className="text-xs opacity-60">{accounts.length} account{accounts.length !== 1 ? 's' : ''} combined</p>
-      </div>
+      {/* Net Worth summary */}
+      {!isLoading && accounts.length > 0 && (
+        <div className="rounded-2xl bg-primary p-5 text-primary-foreground space-y-3">
+          <div className="space-y-0.5">
+            <p className="text-xs font-medium opacity-75">Net Worth</p>
+            <p className="text-3xl font-bold tabular-nums tracking-tight">{formatCurrency(netWorth)}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 pt-1 border-t border-primary-foreground/20">
+            <div>
+              <p className="text-[10px] font-medium opacity-60 mb-0.5">Assets</p>
+              <p className="text-sm font-bold tabular-nums text-emerald-300">{formatCurrency(totalAssets)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-medium opacity-60 mb-0.5">Liabilities</p>
+              <p className="text-sm font-bold tabular-nums text-rose-300">
+                {totalLiabilities > 0 ? `-${formatCurrency(totalLiabilities)}` : formatCurrency(0)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Accounts List */}
+      {/* Category + Type filter chips */}
+      {!isLoading && accounts.length > 0 && (
+        <div className="space-y-2">
+          {/* Category chips */}
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide -mx-4 px-4 lg:mx-0 lg:px-0">
+            {([
+              { value: 'all',       label: '💳 All' },
+              { value: 'asset',     label: '📦 Assets' },
+              { value: 'liability', label: '💳 Liabilities' },
+            ] as const).map(({ value, label }) => (
+              <button key={value} type="button"
+                onClick={() => { setCategoryFilter(value); setTypeFilter('all') }}
+                className={cn(
+                  'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all flex-shrink-0',
+                  categoryFilter === value && typeFilter === 'all'
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'bg-accent text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {label}
+              </button>
+            ))}
+            {/* Type-level chips */}
+            {typeSummaries.length > 0 && (
+              <div className="w-px bg-border mx-1 flex-shrink-0" />
+            )}
+            {typeSummaries.map(({ value, label, emoji }) => (
+              <button key={value} type="button"
+                onClick={() => setTypeFilter(value)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all flex-shrink-0',
+                  typeFilter === value
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'bg-accent text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {emoji} {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Type summary grid (All view only) */}
+      {!isLoading && typeFilter === 'all' && typeSummaries.length > 1 && (
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+          {typeSummaries.map(({ value, label, emoji, total, category }) => (
+            <button key={value} type="button"
+              onClick={() => setTypeFilter(value)}
+              className="flex items-center gap-2.5 p-3 rounded-xl border border-border bg-card hover:bg-accent/50 active:scale-95 transition-all text-left"
+            >
+              <span className="text-xl flex-shrink-0">{emoji}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] text-muted-foreground">{label}</p>
+                <p className={cn(
+                  'text-sm font-bold tabular-nums truncate',
+                  category === 'liability' && total > 0 ? 'text-rose-600 dark:text-rose-400' : ''
+                )}>
+                  {category === 'liability' && total > 0 ? `${formatCurrency(total)} owed` : formatCurrency(total)}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Accounts list */}
       {isLoading ? (
         <div className="space-y-3">
-          {[...Array(3)].map((_, i) => (
-            <Skeleton key={i} className="h-20 rounded-2xl" />
-          ))}
+          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 rounded-2xl" />)}
         </div>
       ) : accounts.length === 0 ? (
         <div className="text-center py-16 rounded-2xl border border-dashed border-border space-y-3">
@@ -233,57 +358,43 @@ export default function AccountsPage() {
           <p className="text-xs text-muted-foreground">Add accounts in Settings to start tracking balances</p>
           <Link href="/settings">
             <Button type="button" size="sm" className="mt-2 rounded-xl gap-1.5">
-              <Settings className="w-3.5 h-3.5" />
-              Go to Settings
+              <Settings className="w-3.5 h-3.5" /> Go to Settings
             </Button>
           </Link>
         </div>
+      ) : typeFilter !== 'all' ? (
+        // Single-type flat list
+        <div className="space-y-2">
+          {visibleAccounts.length === 0 ? (
+            <div className="text-center py-10 rounded-2xl border border-dashed border-border space-y-2">
+              <p className="text-2xl">{activeType?.emoji}</p>
+              <p className="text-sm font-semibold">No {activeType?.label} accounts</p>
+            </div>
+          ) : (
+            visibleAccounts.map((acc) => <AccountCard key={acc.id} acc={acc} />)
+          )}
+        </div>
       ) : (
-        <div className="space-y-3">
-          {ACCOUNT_TYPES.map(({ value, label, emoji }) => {
-            const group = accounts.filter((a) => a.type === value)
-            if (group.length === 0) return null
-            return (
-              <div key={value} className="space-y-2">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
-                  {emoji} {label}
-                </p>
-                {group.map((acc) => (
-                  <div
-                    key={acc.id}
-                    className="flex items-center gap-3 p-4 rounded-2xl border border-border bg-card"
-                  >
-                    <div className="w-10 h-10 rounded-xl bg-accent/60 flex items-center justify-center text-lg flex-shrink-0">
-                      {acc.emoji}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold truncate">{acc.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{typeLabel(acc.type)}</p>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className={cn(
-                        'text-base font-bold tabular-nums',
-                        acc.balance >= 0
-                          ? 'text-emerald-600 dark:text-emerald-400'
-                          : 'text-rose-600 dark:text-rose-400'
-                      )}>
-                        {formatCurrency(acc.balance)}
-                      </p>
-                      <div className="flex items-center justify-end gap-0.5 mt-0.5">
-                        {acc.balance >= 0
-                          ? <TrendingUp className="w-3 h-3 text-emerald-500" />
-                          : <TrendingDown className="w-3 h-3 text-rose-500" />
-                        }
-                        <p className="text-[10px] text-muted-foreground">
-                          {acc.balance >= 0 ? 'positive' : 'negative'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          })}
+        // Grouped: Assets then Liabilities
+        <div className="space-y-4">
+          {assetAccounts.length > 0 && (
+            <AccountGroup
+              label="Assets"
+              accounts={categoryFilter === 'liability' ? [] : assetAccounts}
+              groupTotal={totalAssets}
+              totalLabel={formatCurrency(totalAssets)}
+              totalColor="text-emerald-600 dark:text-emerald-400"
+            />
+          )}
+          {liabilityAccounts.length > 0 && categoryFilter !== 'asset' && (
+            <AccountGroup
+              label="Liabilities"
+              accounts={liabilityAccounts}
+              groupTotal={totalLiabilities}
+              totalLabel={totalLiabilities > 0 ? `${formatCurrency(totalLiabilities)} owed` : 'No debt'}
+              totalColor={totalLiabilities > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
+            />
+          )}
         </div>
       )}
 
@@ -291,74 +402,55 @@ export default function AccountsPage() {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold">Account Activity</h2>
+          {(typeFilter !== 'all' && activeType) && (
+            <span className="text-xs text-muted-foreground">{activeType.emoji} {activeType.label} only</span>
+          )}
         </div>
 
-        {/* Filters */}
         <div className="flex gap-2">
           <Select value={month} onValueChange={(v: string | null) => setMonth(v ?? 'all')}>
-            <SelectTrigger className="h-9 rounded-xl text-xs flex-1">
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger className="h-9 rounded-xl text-xs flex-1"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All months</SelectItem>
-              {MONTHS.map((m) => (
-                <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-              ))}
+              {MONTHS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={year} onValueChange={(v: string | null) => setYear(v ?? 'all')}>
-            <SelectTrigger className="h-9 rounded-xl text-xs w-24">
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger className="h-9 rounded-xl text-xs w-24"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All years</SelectItem>
-              {YEARS.map((y) => (
-                <SelectItem key={y} value={y}>{y}</SelectItem>
-              ))}
+              {YEARS.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
 
-        {/* Summary row */}
-        {!activityLoading && entries.length > 0 && (
+        {!activityLoading && visibleEntries.length > 0 && (
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-xl bg-emerald-500/10 p-3 text-center">
               <p className="text-[10px] text-muted-foreground mb-0.5">Total In</p>
-              <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                +{formatCurrency(stats.totalIn)}
-              </p>
+              <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">+{formatCurrency(stats.totalIn)}</p>
             </div>
             <div className="rounded-xl bg-rose-500/10 p-3 text-center">
               <p className="text-[10px] text-muted-foreground mb-0.5">Total Out</p>
-              <p className="text-sm font-bold text-rose-600 dark:text-rose-400 tabular-nums">
-                -{formatCurrency(stats.totalOut)}
-              </p>
+              <p className="text-sm font-bold text-rose-600 dark:text-rose-400 tabular-nums">-{formatCurrency(stats.totalOut)}</p>
             </div>
           </div>
         )}
 
         {activityLoading ? (
           <div className="space-y-3">
-            {[...Array(3)].map((_, i) => (
-              <Skeleton key={i} className="h-16 rounded-2xl" />
-            ))}
+            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-16 rounded-2xl" />)}
           </div>
-        ) : entries.length === 0 ? (
+        ) : visibleEntries.length === 0 ? (
           <div className="text-center py-10 rounded-2xl border border-dashed border-border space-y-2">
             <p className="text-3xl">💳</p>
             <p className="font-semibold text-sm">No account activity yet</p>
-            <p className="text-xs text-muted-foreground">
-              Expenses, income, and transfers linked to accounts will appear here
-            </p>
+            <p className="text-xs text-muted-foreground">Expenses, income, and transfers linked to accounts will appear here</p>
           </div>
         ) : (
           <div className="space-y-2">
-            {entries.map((entry) => (
-              <ActivityFeedItem
-                key={`${entry.kind}-${entry.id}`}
-                entry={entry}
-                onDelete={handleDelete}
-              />
+            {visibleEntries.map((entry) => (
+              <ActivityFeedItem key={`${entry.kind}-${entry.id}`} entry={entry} onDelete={handleDelete} />
             ))}
           </div>
         )}
@@ -366,17 +458,12 @@ export default function AccountsPage() {
 
       {/* Transfer FAB */}
       {accounts.length >= 2 && (
-        <button
-          type="button"
-          onClick={() => setShowTransfer(true)}
-          title="New Transfer"
-          className="fixed bottom-20 right-4 lg:bottom-8 lg:right-8 z-40 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all"
-        >
+        <button type="button" onClick={() => setShowTransfer(true)} title="New Transfer"
+          className="fixed bottom-20 right-4 lg:bottom-8 lg:right-8 z-40 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:opacity-90 active:scale-95 transition-all">
           <ArrowLeftRight className="w-6 h-6" />
         </button>
       )}
 
-      {/* Transfer modal */}
       {isMobile ? (
         <BottomSheet open={showTransfer} onClose={() => { setShowTransfer(false); resetForm() }} title="New Transfer">
           {transferForm}
@@ -384,13 +471,71 @@ export default function AccountsPage() {
       ) : (
         <Dialog open={showTransfer} onOpenChange={(o) => { if (!o) resetForm(); setShowTransfer(o) }}>
           <DialogContent className="max-w-md rounded-2xl">
-            <DialogHeader>
-              <DialogTitle>New Transfer</DialogTitle>
-            </DialogHeader>
+            <DialogHeader><DialogTitle>New Transfer</DialogTitle></DialogHeader>
             {transferForm}
           </DialogContent>
         </Dialog>
       )}
+    </div>
+  )
+}
+
+// ── Sub-components ────────────────────────────────────────────
+
+function AccountGroup({
+  label, accounts, groupTotal, totalLabel, totalColor,
+}: {
+  label: string
+  accounts: FinancialAccount[]
+  groupTotal: number
+  totalLabel: string
+  totalColor: string
+}) {
+  if (accounts.length === 0) return null
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{label}</p>
+        <p className={cn('text-[10px] font-semibold tabular-nums', totalColor)}>{totalLabel}</p>
+      </div>
+      {accounts.map((acc) => <AccountCard key={acc.id} acc={acc} />)}
+    </div>
+  )
+}
+
+function AccountCard({ acc }: { acc: FinancialAccount }) {
+  const isLiab = isLiabilityType(acc.type)
+  const typeInfo = ACCOUNT_TYPES.find((t) => t.value === acc.type)
+  return (
+    <div className="flex items-center gap-3 p-4 rounded-2xl border border-border bg-card">
+      <div className="w-10 h-10 rounded-xl bg-accent/60 flex items-center justify-center text-lg flex-shrink-0">
+        {acc.emoji}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold truncate">{acc.name}</p>
+        <p className="text-[10px] text-muted-foreground">
+          {typeInfo?.label ?? acc.type}
+          {isLiab && <span className="ml-1 text-amber-500">· Liability</span>}
+        </p>
+      </div>
+      <div className="text-right flex-shrink-0">
+        <p className={cn('text-base font-bold tabular-nums', balanceColor(acc))}>
+          {displayBalance(acc)}
+        </p>
+        <div className="flex items-center justify-end gap-0.5 mt-0.5">
+          {isLiab
+            ? acc.balance < 0
+              ? <TrendingDown className="w-3 h-3 text-rose-500" />
+              : <TrendingUp className="w-3 h-3 text-emerald-500" />
+            : acc.balance >= 0
+              ? <TrendingUp className="w-3 h-3 text-emerald-500" />
+              : <TrendingDown className="w-3 h-3 text-rose-500" />
+          }
+          <p className="text-[10px] text-muted-foreground">
+            {isLiab ? (acc.balance < 0 ? 'in debt' : 'clear') : (acc.balance >= 0 ? 'positive' : 'overdrawn')}
+          </p>
+        </div>
+      </div>
     </div>
   )
 }
