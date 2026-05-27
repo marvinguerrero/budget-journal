@@ -4,19 +4,24 @@ import { SharedExpense } from '@/types'
 import { formatCurrency, formatShortDate } from '@/utils/format'
 import { CATEGORY_COLORS, CATEGORY_ICONS } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
-import { Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 
 interface Props {
   expense: SharedExpense
   currentUserId: string
   isOwner: boolean
+  canEditBudget: boolean
+  onEdit: (expense: SharedExpense) => void
   onDelete: (id: string) => void
 }
 
-export function SharedExpenseItem({ expense, currentUserId, isOwner, onDelete }: Props) {
+export function SharedExpenseItem({
+  expense, currentUserId, isOwner, canEditBudget, onEdit, onDelete,
+}: Props) {
   const icon = CATEGORY_ICONS[expense.category] ?? '📦'
   const color = CATEGORY_COLORS[expense.category] ?? '#6b7280'
   const isMe = expense.user_id === currentUserId
+  const canEdit = isMe || isOwner || canEditBudget
   const canDelete = isMe || isOwner
 
   return (
@@ -41,8 +46,19 @@ export function SharedExpenseItem({ expense, currentUserId, isOwner, onDelete }:
           <span className="text-xs text-muted-foreground">{formatShortDate(expense.created_at)}</span>
         </div>
       </div>
-      <div className="flex items-center gap-1.5 flex-shrink-0">
-        <span className="text-sm font-bold tabular-nums">{formatCurrency(expense.amount)}</span>
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <span className="text-sm font-bold tabular-nums mr-1">{formatCurrency(expense.amount)}</span>
+        {canEdit && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="w-7 h-7 p-0 rounded-lg text-muted-foreground hover:text-foreground"
+            onClick={() => onEdit(expense)}
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </Button>
+        )}
         {canDelete && (
           <Button
             type="button"

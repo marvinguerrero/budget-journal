@@ -11,8 +11,8 @@ import {
   deleteSharedGroup,
   updateMemberPermissions,
 } from '@/services/sharedGroups'
-import { createSharedBudget, deleteSharedBudget } from '@/services/sharedBudgets'
-import { createSharedExpense, deleteSharedExpense } from '@/services/sharedExpenses'
+import { createSharedBudget, updateSharedBudget, deleteSharedBudget } from '@/services/sharedBudgets'
+import { createSharedExpense, updateSharedExpense, deleteSharedExpense } from '@/services/sharedExpenses'
 import {
   createPermissionRequest,
   approvePermissionRequest,
@@ -94,6 +94,16 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const [inviteCanEdit, setInviteCanEdit] = useState(false)
   const [inviteCanInvite, setInviteCanInvite] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+
+  // edit expense
+  const [editingExpense, setEditingExpense] = useState<SharedExpense | null>(null)
+  const [editExpenseCategory, setEditExpenseCategory] = useState('')
+  const [editExpenseAmount, setEditExpenseAmount] = useState('')
+  const [editExpenseNote, setEditExpenseNote] = useState('')
+
+  // edit budget
+  const [editingBudget, setEditingBudget] = useState<SharedBudget | null>(null)
+  const [editBudgetAmount, setEditBudgetAmount] = useState('')
 
   const isOwner = group?.owner_id === currentUserId
 
@@ -189,6 +199,62 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       toast.success('Budget removed')
     } catch {
       toast.error('Failed to remove budget')
+    }
+  }
+
+  const openEditExpense = (expense: SharedExpense) => {
+    setEditingExpense(expense)
+    setEditExpenseCategory(expense.category)
+    setEditExpenseAmount(String(expense.amount))
+    setEditExpenseNote(expense.note)
+  }
+
+  const handleSaveExpense = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingExpense) return
+    const amt = parseFloat(editExpenseAmount)
+    if (!amt || amt <= 0) return
+    setIsSaving(true)
+    try {
+      await updateSharedExpense(editingExpense.id, editExpenseCategory, amt, editExpenseNote)
+      setExpenses((prev) =>
+        prev.map((ex) =>
+          ex.id === editingExpense.id
+            ? { ...ex, category: editExpenseCategory, amount: amt, note: editExpenseNote }
+            : ex
+        )
+      )
+      setEditingExpense(null)
+      toast.success('Expense updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update expense')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const openEditBudget = (budget: SharedBudget) => {
+    setEditingBudget(budget)
+    setEditBudgetAmount(String(budget.amount))
+  }
+
+  const handleSaveBudget = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingBudget) return
+    const amt = parseFloat(editBudgetAmount)
+    if (!amt || amt <= 0) return
+    setIsSaving(true)
+    try {
+      await updateSharedBudget(editingBudget.id, amt)
+      setBudgets((prev) =>
+        prev.map((b) => (b.id === editingBudget.id ? { ...b, amount: amt } : b))
+      )
+      setEditingBudget(null)
+      toast.success('Budget updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update budget')
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -493,6 +559,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 budget={budget}
                 expenses={expenses}
                 canDelete={myPerms.canEditBudget}
+                onEdit={openEditBudget}
                 onDelete={handleDeleteBudget}
               />
             ))}
@@ -520,6 +587,8 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 expense={exp}
                 currentUserId={currentUserId}
                 isOwner={isOwner}
+                canEditBudget={myPerms.canEditBudget}
+                onEdit={openEditExpense}
                 onDelete={handleDeleteExpense}
               />
             ))}
@@ -598,6 +667,98 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 onClick={() => setShowAddBudget(false)}>Cancel</Button>
               <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>
                 {isSaving ? 'Saving...' : 'Set Budget'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Expense dialog ── */}
+      <Dialog open={!!editingExpense} onOpenChange={(o) => !o && setEditingExpense(null)}>
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Edit Expense</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveExpense} className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Category</Label>
+              <Select value={editExpenseCategory} onValueChange={(v: string | null) => v && setEditExpenseCategory(v)}>
+                <SelectTrigger className="h-11 rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DEFAULT_CATEGORIES.map((cat) => (
+                    <SelectItem key={cat.name} value={cat.name}>{cat.icon} {cat.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Amount (₱)</Label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  min="1"
+                  placeholder="0"
+                  value={editExpenseAmount}
+                  onChange={(e) => setEditExpenseAmount(e.target.value)}
+                  className="pl-8 h-12 text-lg font-semibold rounded-xl"
+                  required
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Note</Label>
+              <Input
+                placeholder="What's this for?"
+                value={editExpenseNote}
+                onChange={(e) => setEditExpenseNote(e.target.value)}
+                className="h-11 rounded-xl"
+              />
+            </div>
+            <div className="flex gap-3">
+              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
+                onClick={() => setEditingExpense(null)}>Cancel</Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Budget dialog ── */}
+      <Dialog open={!!editingBudget} onOpenChange={(o) => !o && setEditingBudget(null)}>
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">
+              Edit Budget — {editingBudget?.category}
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveBudget} className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Budget Amount (₱)</Label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  min="1"
+                  placeholder="0"
+                  value={editBudgetAmount}
+                  onChange={(e) => setEditBudgetAmount(e.target.value)}
+                  className="pl-8 h-12 text-lg font-semibold rounded-xl"
+                  required
+                />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
+                onClick={() => setEditingBudget(null)}>Cancel</Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>
+                {isSaving ? 'Saving...' : 'Save Changes'}
               </Button>
             </div>
           </form>

@@ -19,16 +19,13 @@ export async function createSharedBudget(
   return data
 }
 
-export async function updateSharedBudget(id: string, amount: number): Promise<SharedBudget> {
+export async function updateSharedBudget(id: string, amount: number): Promise<void> {
   const supabase = createClient()
-  const { data, error } = await supabase
-    .from('shared_budgets')
-    .update({ amount })
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+  const { error } = await supabase.rpc('update_shared_budget', {
+    p_budget_id: id,
+    p_amount:    amount,
+  })
+  if (error) throw new Error(error.message)
 }
 
 export async function deleteSharedBudget(id: string): Promise<void> {

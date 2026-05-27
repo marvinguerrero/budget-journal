@@ -5,16 +5,17 @@ import { SharedBudget, SharedExpense } from '@/types'
 import { formatCurrency } from '@/utils/format'
 import { CATEGORY_COLORS, CATEGORY_ICONS } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
-import { Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 
 interface Props {
   budget: SharedBudget
   expenses: SharedExpense[]
   canDelete: boolean
+  onEdit: (budget: SharedBudget) => void
   onDelete: (id: string) => void
 }
 
-export function SharedBudgetProgress({ budget, expenses, canDelete, onDelete }: Props) {
+export function SharedBudgetProgress({ budget, expenses, canDelete, onEdit, onDelete }: Props) {
   const spent = useMemo(
     () => expenses.filter((e) => e.category === budget.category).reduce((s, e) => s + e.amount, 0),
     [expenses, budget.category]
@@ -52,10 +53,21 @@ export function SharedBudgetProgress({ budget, expenses, canDelete, onDelete }: 
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`text-sm font-bold tabular-nums ${isOver ? 'text-rose-500' : remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+        <div className="flex items-center gap-1">
+          <span className={`text-sm font-bold tabular-nums mr-1 ${isOver ? 'text-rose-500' : remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
             {isOver ? `-${formatCurrency(spent - budget.amount)}` : formatCurrency(remaining)}
           </span>
+          {canDelete && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-7 h-7 p-0 rounded-lg text-muted-foreground hover:text-foreground"
+              onClick={() => onEdit(budget)}
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </Button>
+          )}
           {canDelete && (
             <Button
               type="button"

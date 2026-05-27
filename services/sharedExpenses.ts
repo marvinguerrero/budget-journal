@@ -27,6 +27,22 @@ export async function createSharedExpense(
   return data
 }
 
+export async function updateSharedExpense(
+  id: string,
+  category: string,
+  amount: number,
+  note: string
+): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.rpc('update_shared_expense', {
+    p_expense_id: id,
+    p_category:   category.trim(),
+    p_amount:     amount,
+    p_note:       note.trim(),
+  })
+  if (error) throw new Error(error.message)
+}
+
 export async function deleteSharedExpense(id: string): Promise<void> {
   const supabase = createClient()
   const { error } = await supabase.from('shared_expenses').delete().eq('id', id)
