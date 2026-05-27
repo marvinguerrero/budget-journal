@@ -15,8 +15,8 @@ export async function getGroupMessages(groupId: string): Promise<GroupMessage[]>
 
 export async function deleteGroupMessage(id: string): Promise<void> {
   const supabase = createClient()
-  const { error } = await supabase.from('shared_group_messages').delete().eq('id', id)
-  if (error) throw error
+  const { error } = await supabase.rpc('delete_group_message', { p_message_id: id })
+  if (error) throw new Error(error.message)
 }
 
 export async function sendGroupMessage(groupId: string, message: string): Promise<GroupMessage> {

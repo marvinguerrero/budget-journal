@@ -40,6 +40,17 @@ export interface SharedBudget {
   created_at: string
 }
 
+export interface AppNotification {
+  id: string
+  user_id: string
+  type: 'chat_message' | 'group_invite' | 'permission_approved' | 'member_joined'
+  title: string
+  message: string
+  is_read: boolean
+  related_id: string | null
+  created_at: string
+}
+
 export interface GroupMessage {
   id: string
   group_id: string

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
+import { NotificationBell } from '@/components/notifications/NotificationBell'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,6 +39,7 @@ export function Header({ userEmail }: HeaderProps) {
         <div className="hidden lg:block" />
 
         <div className="flex items-center gap-2">
+          <NotificationBell />
           <ThemeToggle />
           <DropdownMenu>
             <DropdownMenuTrigger className="relative h-9 w-9 rounded-full flex items-center justify-center outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
