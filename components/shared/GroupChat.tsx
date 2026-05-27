@@ -3,12 +3,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { GroupMessage } from '@/types'
-import { getGroupMessages, sendGroupMessage } from '@/services/sharedMessages'
+import { getGroupMessages, sendGroupMessage, deleteGroupMessage } from '@/services/sharedMessages'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { Send } from 'lucide-react'
+import { Send, Trash2 } from 'lucide-react'
 import { formatChatTime } from '@/utils/format'
 import { toast } from 'sonner'
 
@@ -54,6 +54,17 @@ export function GroupChat({ groupId, currentUserId }: Props) {
     scrollToBottom()
   }, [messages.length, scrollToBottom])
 
+  const handleDelete = async (id: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== id))
+    try {
+      await deleteGroupMessage(id)
+    } catch {
+      toast.error('Failed to delete message')
+      // Reload to restore state on failure
+      getGroupMessages(groupId).then(setMessages).catch(() => null)
+    }
+  }
+
   // Realtime subscription
   useEffect(() => {
     const supabase = createClient()
@@ -72,6 +83,18 @@ export function GroupChat({ groupId, currentUserId }: Props) {
           setMessages((prev) =>
             prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
           )
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'shared_group_messages',
+          filter: `group_id=eq.${groupId}`,
+        },
+        (payload) => {
+          setMessages((prev) => prev.filter((m) => m.id !== payload.old.id))
         }
       )
       .subscribe()
@@ -141,19 +164,30 @@ export function GroupChat({ groupId, currentUserId }: Props) {
                     {msg.user_email.split('@')[0]}
                   </span>
                 )}
-                <div
-                  className={cn(
-                    'max-w-[78%] px-3.5 py-2 text-sm leading-relaxed break-words',
-                    isMe
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-foreground',
-                    // Bubble shape: rounded except the "tail" corner on last bubble
-                    isMe
-                      ? isLast ? 'rounded-2xl rounded-br-md' : 'rounded-2xl'
-                      : isLast ? 'rounded-2xl rounded-bl-md' : 'rounded-2xl'
+                <div className={cn('flex items-end gap-1.5', isMe ? 'flex-row-reverse' : 'flex-row')}>
+                  <div
+                    className={cn(
+                      'max-w-[78%] px-3.5 py-2 text-sm leading-relaxed break-words',
+                      isMe
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-foreground',
+                      isMe
+                        ? isLast ? 'rounded-2xl rounded-br-md' : 'rounded-2xl'
+                        : isLast ? 'rounded-2xl rounded-bl-md' : 'rounded-2xl'
+                    )}
+                  >
+                    {msg.message}
+                  </div>
+                  {isMe && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(msg.id)}
+                      className="w-5 h-5 flex items-center justify-center rounded-md text-muted-foreground/40 hover:text-destructive transition-colors flex-shrink-0 mb-0.5"
+                      aria-label="Delete message"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                   )}
-                >
-                  {msg.message}
                 </div>
                 {isLast && (
                   <span className="text-[10px] text-muted-foreground mt-1 px-1">
