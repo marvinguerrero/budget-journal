@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useEffect } from 'react'
-import { Expense, Budget } from '@/types'
+import { Expense, Budget, IncomeEntry } from '@/types'
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/constants'
 import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
 import { StatsCard } from '@/components/dashboard/StatsCard'
@@ -13,12 +13,13 @@ import { InsightSummary } from '@/components/budgets/InsightSummary'
 import { useExpenseStore } from '@/store/useExpenseStore'
 import { useExpenses } from '@/hooks/useExpenses'
 import { useCategories } from '@/hooks/useCategories'
-import { Wallet, TrendingDown, Calendar, Tag } from 'lucide-react'
+import { Wallet, TrendingDown, Calendar, Tag, TrendingUp } from 'lucide-react'
 import { format } from 'date-fns'
 
 interface DashboardClientProps {
   initialExpenses: Expense[]
   initialBudgets: Budget[]
+  initialIncomeEntries: IncomeEntry[]
   userEmail: string
   month: number
   year: number
@@ -27,6 +28,7 @@ interface DashboardClientProps {
 export function DashboardClient({
   initialExpenses,
   initialBudgets,
+  initialIncomeEntries,
   userEmail,
   month,
   year,
@@ -39,6 +41,11 @@ export function DashboardClient({
     setExpenses(initialExpenses)
     setBudgets(initialBudgets)
   }, [initialExpenses, initialBudgets, setExpenses, setBudgets])
+
+  const totalIncome = useMemo(
+    () => initialIncomeEntries.reduce((s, e) => s + e.amount, 0),
+    [initialIncomeEntries]
+  )
 
   const stats = useMemo(() => {
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
@@ -130,6 +137,58 @@ export function DashboardClient({
           accent="#A855F7"
           subtitle="highest spending"
         />
+      </div>
+
+      {/* Cash Flow */}
+      <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-emerald-500" />
+          <p className="text-sm font-semibold">Cash Flow — {getMonthName(month)}</p>
+        </div>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div>
+            <p className="text-xs text-muted-foreground mb-0.5">Income</p>
+            <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+              {formatCurrency(totalIncome)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-0.5">Expenses</p>
+            <p className="text-sm font-bold text-rose-600 dark:text-rose-400 tabular-nums">
+              {formatCurrency(stats.totalExpenses)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-0.5">Net</p>
+            <p className={`text-sm font-bold tabular-nums ${totalIncome - stats.totalExpenses >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+              {totalIncome - stats.totalExpenses >= 0 ? '+' : ''}{formatCurrency(totalIncome - stats.totalExpenses)}
+            </p>
+          </div>
+        </div>
+        {(totalIncome > 0 || stats.totalExpenses > 0) && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+                  style={{'--bar-w': `${Math.min(100, totalIncome > 0 ? 100 : 0)}%`, width: 'var(--bar-w)'} as React.CSSProperties}
+                />
+              </div>
+              <span className="w-16 text-right">Income</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="w-2 h-2 rounded-full bg-rose-500 flex-shrink-0" />
+              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-rose-500 transition-all duration-500"
+                  style={{'--bar-w': `${totalIncome > 0 ? Math.min(100, (stats.totalExpenses / totalIncome) * 100) : 100}%`, width: 'var(--bar-w)'} as React.CSSProperties}
+                />
+              </div>
+              <span className="w-16 text-right">Expenses</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

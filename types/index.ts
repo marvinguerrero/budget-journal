@@ -40,6 +40,39 @@ export interface SharedBudget {
   created_at: string
 }
 
+export interface IncomeSource {
+  id: string
+  user_id: string | null
+  name: string
+  emoji: string
+  color: string
+  is_default: boolean
+  created_at: string
+}
+
+export interface IncomeEntry {
+  id: string
+  user_id: string
+  income_source_id: string
+  amount: number
+  note: string
+  received_at: string
+  created_at: string
+}
+
+export interface IncomeSourceFormData {
+  name: string
+  emoji: string
+  color: string
+}
+
+export interface IncomeEntryFormData {
+  income_source_id: string
+  amount: number
+  note: string
+  received_at: string
+}
+
 export interface AppNotification {
   id: string
   user_id: string

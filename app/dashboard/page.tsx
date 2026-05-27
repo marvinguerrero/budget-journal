@@ -17,7 +17,10 @@ export default async function DashboardPage() {
   const startDate = new Date(year, month - 1, 1).toISOString()
   const endDate = new Date(year, month, 0, 23, 59, 59).toISOString()
 
-  const [{ data: expenses }, { data: budgets }] = await Promise.all([
+  const incomeStart = new Date(year, month - 1, 1).toISOString()
+  const incomeEnd   = new Date(year, month, 0, 23, 59, 59).toISOString()
+
+  const [{ data: expenses }, { data: budgets }, { data: incomeEntries }] = await Promise.all([
     supabase
       .from('expenses')
       .select('*')
@@ -31,12 +34,19 @@ export default async function DashboardPage() {
       .eq('user_id', user.id)
       .eq('month', month)
       .eq('year', year),
+    supabase
+      .from('income_entries')
+      .select('*')
+      .eq('user_id', user.id)
+      .gte('received_at', incomeStart)
+      .lte('received_at', incomeEnd),
   ])
 
   return (
     <DashboardClient
       initialExpenses={expenses ?? []}
       initialBudgets={budgets ?? []}
+      initialIncomeEntries={incomeEntries ?? []}
       userEmail={user.email ?? ''}
       month={month}
       year={year}

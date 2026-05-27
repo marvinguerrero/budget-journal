@@ -11,15 +11,17 @@ import {
   Settings,
   Wallet,
   Users,
+  TrendingUp,
 } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/expenses', label: 'Expenses', icon: Receipt },
-  { href: '/budgets', label: 'Budgets', icon: Target },
-  { href: '/shared', label: 'Shared', icon: Users },
+  { href: '/expenses',  label: 'Expenses',  icon: Receipt },
+  { href: '/income',    label: 'Income',    icon: TrendingUp },
+  { href: '/budgets',   label: 'Budgets',   icon: Target },
+  { href: '/shared',    label: 'Shared',    icon: Users },
   { href: '/analytics', label: 'Analytics', icon: PieChart },
-  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/settings',  label: 'Settings',  icon: Settings },
 ]
 
 export function Sidebar() {
@@ -39,7 +41,7 @@ export function Sidebar() {
 
       <nav className="flex-1 px-3 py-4 space-y-1">
         {navItems.map(({ href, label, icon: Icon }) => {
-          const isActive = pathname === href
+          const isActive = pathname === href || pathname.startsWith(href + '/')
           return (
             <Link
               key={href}
@@ -59,9 +61,7 @@ export function Sidebar() {
       </nav>
 
       <div className="px-4 py-4 border-t border-border">
-        <p className="text-xs text-muted-foreground text-center">
-          Budget Journal v1.0
-        </p>
+        <p className="text-xs text-muted-foreground text-center">Budget Journal v1.0</p>
       </div>
     </aside>
   )

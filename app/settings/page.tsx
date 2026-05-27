@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useCategories } from '@/hooks/useCategories'
 import { usePaymentMethods } from '@/hooks/usePaymentMethods'
+import { useIncomeSources } from '@/hooks/useIncomeSources'
 import { Sun, Moon, Monitor, LogOut, User, Palette, Layers, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
@@ -21,10 +22,12 @@ export default function SettingsPage() {
   const { user, signOut } = useAuth()
   const { categories, deleteCategory } = useCategories()
   const { paymentMethods, deletePaymentMethod } = usePaymentMethods()
+  const { sources, removeSource } = useIncomeSources()
 
   const initials = user?.email?.slice(0, 2).toUpperCase() || 'U'
   const userCategories = categories.filter((c) => !c.is_default)
   const userMethods = paymentMethods.filter((m) => !m.is_default)
+  const userSources = sources.filter((s) => !s.is_default)
 
   return (
     <div className="p-4 lg:p-6 pb-24 lg:pb-6 space-y-6 max-w-2xl">
@@ -146,6 +149,40 @@ export default function SettingsPage() {
                       onClick={() => deletePaymentMethod(pm.id, pm.name)}
                       className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                       aria-label={`Delete ${pm.name}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* Income Sources */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+              Custom Income Sources
+            </p>
+            {userSources.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-1">
+                None yet — add one from the Income page.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {userSources.map((src) => (
+                  <div
+                    key={src.id}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-accent/50"
+                  >
+                    <span className="text-xl leading-none">{src.emoji}</span>
+                    <span className="flex-1 text-sm font-medium">{src.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeSource(src.id)}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      aria-label={`Delete ${src.name}`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

@@ -40,6 +40,20 @@ export const PRESET_EMOJIS_PAYMENT = [
   '💴','💶','💷','🏧','💰','🪙','💎','🔑',
 ]
 
+export const DEFAULT_INCOME_SOURCES = [
+  { name: 'Salary',      emoji: '💼', color: '#3B82F6', is_default: true },
+  { name: 'Freelance',   emoji: '💻', color: '#8B5CF6', is_default: true },
+  { name: 'Bonus',       emoji: '🎁', color: '#F59E0B', is_default: true },
+  { name: 'Investments', emoji: '📈', color: '#10B981', is_default: true },
+  { name: 'Business',    emoji: '🏢', color: '#EF4444', is_default: true },
+]
+
+export const PRESET_EMOJIS_INCOME = [
+  '💼','💻','🎁','📈','🏢','💰','🏦','🪙',
+  '🍪','🛒','🎨','✂️','📷','🎵','🏠','🚗',
+  '💡','🌐','📦','🎯','🏆','⭐','🎪','🎓',
+]
+
 // Backwards-compat lookup maps (used by charts / analytics that receive raw text values)
 export const CATEGORY_COLORS: Record<string, string> = Object.fromEntries(
   DEFAULT_CATEGORIES.map((c) => [c.name, c.color])
