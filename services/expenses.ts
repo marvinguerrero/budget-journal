@@ -46,6 +46,7 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense>
       category: formData.category,
       note: formData.note,
       payment_method: formData.payment_method || null,
+      account_id: formData.account_id || null,
       created_at: formData.created_at || new Date().toISOString(),
     })
     .select()

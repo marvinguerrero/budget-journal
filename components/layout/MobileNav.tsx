@@ -4,17 +4,40 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import {
-  LayoutDashboard, Receipt, Target, Users, PieChart, Settings, TrendingUp,
+  LayoutDashboard, ArrowLeftRight, Users, BarChart3, Settings,
 } from 'lucide-react'
 
 const navItems = [
-  { href: '/dashboard', label: 'Home',     icon: LayoutDashboard },
-  { href: '/expenses',  label: 'Expenses', icon: Receipt },
-  { href: '/income',    label: 'Income',   icon: TrendingUp },
-  { href: '/budgets',   label: 'Budget',   icon: Target },
-  { href: '/shared',    label: 'Shared',   icon: Users },
-  { href: '/analytics', label: 'Analytics',icon: PieChart },
-  { href: '/settings',  label: 'Settings', icon: Settings },
+  {
+    href:        '/dashboard',
+    label:       'Home',
+    icon:        LayoutDashboard,
+    activePaths: ['/dashboard'],
+  },
+  {
+    href:        '/expenses',
+    label:       'Activity',
+    icon:        ArrowLeftRight,
+    activePaths: ['/expenses', '/income', '/activity'],
+  },
+  {
+    href:        '/shared',
+    label:       'Shared',
+    icon:        Users,
+    activePaths: ['/shared'],
+  },
+  {
+    href:        '/budgets',
+    label:       'Insights',
+    icon:        BarChart3,
+    activePaths: ['/budgets', '/analytics', '/insights'],
+  },
+  {
+    href:        '/settings',
+    label:       'Settings',
+    icon:        Settings,
+    activePaths: ['/settings'],
+  },
 ]
 
 export function MobileNav() {
@@ -22,22 +45,32 @@ export function MobileNav() {
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-lg border-t border-border">
-      <div className="flex items-center justify-around px-1 py-2 pb-safe">
-        {navItems.map(({ href, label, icon: Icon }) => {
-          const isActive = pathname === href || pathname.startsWith(href + '/')
+      <div className="flex items-center pb-safe">
+        {navItems.map(({ href, label, icon: Icon, activePaths }) => {
+          const isActive = activePaths.some(
+            (p) => pathname === p || pathname.startsWith(p + '/')
+          )
           return (
             <Link
               key={href}
               href={href}
               className={cn(
-                'flex flex-col items-center gap-0.5 py-1 rounded-xl transition-all duration-200 flex-1',
+                'flex flex-col items-center gap-1 py-2.5 flex-1 transition-all duration-200',
                 isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              <div className={cn('p-1.5 rounded-lg transition-all duration-200', isActive && 'bg-primary/10')}>
-                <Icon className="w-4 h-4" />
+              <div className={cn(
+                'p-1.5 rounded-xl transition-all duration-200',
+                isActive && 'bg-primary/10'
+              )}>
+                <Icon className="w-5 h-5" />
               </div>
-              <span className="text-[9px] font-medium leading-none">{label}</span>
+              <span className={cn(
+                'text-[10px] font-medium leading-none',
+                isActive && 'font-semibold'
+              )}>
+                {label}
+              </span>
             </Link>
           )
         })}

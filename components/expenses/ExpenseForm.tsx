@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CategorySelector } from './CategorySelector'
 import { PaymentMethodSelector } from './PaymentMethodSelector'
+import { AccountSelector } from '@/components/accounts/AccountSelector'
 import { ExpenseFormData } from '@/types'
 import { format } from 'date-fns'
 
@@ -21,6 +22,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   const [category, setCategory] = useState(initialData?.category || 'Food')
   const [note, setNote] = useState(initialData?.note || '')
   const [paymentMethod, setPaymentMethod] = useState(initialData?.payment_method || '')
+  const [accountId, setAccountId] = useState(initialData?.account_id || '')
   const [date, setDate] = useState(
     initialData?.created_at
       ? format(new Date(initialData.created_at), 'yyyy-MM-dd')
@@ -39,6 +41,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
         category,
         note: note.trim() || category,
         payment_method: paymentMethod || undefined,
+        account_id: accountId || null,
         created_at: new Date(date + 'T' + new Date().toTimeString().slice(0, 8)).toISOString(),
       })
     } finally {
@@ -100,6 +103,14 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
           <span className="text-muted-foreground font-normal">(optional)</span>
         </Label>
         <PaymentMethodSelector value={paymentMethod} onChange={setPaymentMethod} />
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-sm font-semibold">
+          Account{' '}
+          <span className="text-muted-foreground font-normal">(optional)</span>
+        </Label>
+        <AccountSelector value={accountId} onChange={setAccountId} />
       </div>
 
       <div className="flex gap-3 pt-2">

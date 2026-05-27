@@ -18,6 +18,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { PRESET_COLORS, PRESET_EMOJIS_INCOME } from '@/lib/constants'
+import { AccountSelector } from '@/components/accounts/AccountSelector'
 import { formatCurrency, getMonthName } from '@/utils/format'
 import { cn } from '@/lib/utils'
 import { Plus } from 'lucide-react'
@@ -49,6 +50,7 @@ export default function IncomePage() {
 
   // ── Add entry form state ─────────────────────────────────────
   const [entrySourceId, setEntrySourceId] = useState('')
+  const [entryAccountId, setEntryAccountId] = useState('')
   const [entryAmount, setEntryAmount]     = useState('')
   const [entryNote, setEntryNote]         = useState('')
   const [entryDate, setEntryDate]         = useState(now.toISOString().slice(0, 10))
@@ -62,6 +64,7 @@ export default function IncomePage() {
   // ── Edit entry form state ────────────────────────────────────
   const [editingEntry, setEditingEntry]   = useState<IncomeEntry | null>(null)
   const [editSourceId, setEditSourceId]   = useState('')
+  const [editAccountId, setEditAccountId] = useState('')
   const [editAmount,   setEditAmount]     = useState('')
   const [editNote,     setEditNote]       = useState('')
   const [editDate,     setEditDate]       = useState('')
@@ -95,6 +98,7 @@ export default function IncomePage() {
     try {
       await addEntry({
         income_source_id: entrySourceId,
+        account_id: entryAccountId || null,
         amount: amt,
         note: entryNote.trim(),
         received_at: new Date(entryDate + 'T12:00:00').toISOString(),
@@ -102,6 +106,7 @@ export default function IncomePage() {
       setShowAdd(false)
       setEntryAmount('')
       setEntryNote('')
+      setEntryAccountId('')
       setEntryDate(now.toISOString().slice(0, 10))
     } finally {
       setIsSaving(false)
@@ -111,6 +116,7 @@ export default function IncomePage() {
   const openEditEntry = (entry: IncomeEntry) => {
     setEditingEntry(entry)
     setEditSourceId(entry.income_source_id)
+    setEditAccountId(entry.account_id ?? '')
     setEditAmount(String(entry.amount))
     setEditNote(entry.note)
     setEditDate(entry.received_at.slice(0, 10))
@@ -125,6 +131,7 @@ export default function IncomePage() {
     try {
       await editEntry(editingEntry.id, {
         income_source_id: editSourceId,
+        account_id: editAccountId || null,
         amount: amt,
         note: editNote.trim(),
         received_at: new Date(editDate + 'T12:00:00').toISOString(),
@@ -205,6 +212,12 @@ export default function IncomePage() {
           onChange={(e) => setEntryDate(e.target.value)}
           className="h-11 rounded-xl" required
         />
+      </div>
+      <div className="space-y-2">
+        <Label className="text-sm font-semibold">
+          Account <span className="text-muted-foreground font-normal">(optional)</span>
+        </Label>
+        <AccountSelector value={entryAccountId} onChange={setEntryAccountId} />
       </div>
       <div className="flex gap-3">
         <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
@@ -406,6 +419,10 @@ export default function IncomePage() {
               <Label className="text-sm font-semibold">Date Received</Label>
               <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="h-11 rounded-xl" required />
             </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Account <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <AccountSelector value={editAccountId} onChange={setEditAccountId} />
+            </div>
             <div className="flex gap-3">
               <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setEditingEntry(null)}>Cancel</Button>
               <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving || !editSourceId}>
@@ -446,6 +463,10 @@ export default function IncomePage() {
               <div className="space-y-2">
                 <Label className="text-sm font-semibold">Date Received</Label>
                 <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="h-11 rounded-xl" required />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Account <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <AccountSelector value={editAccountId} onChange={setEditAccountId} />
               </div>
               <div className="flex gap-3">
                 <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setEditingEntry(null)}>Cancel</Button>

@@ -1,13 +1,13 @@
 import { createClient } from '@/lib/supabase/server'
 import { AppShell } from '@/components/layout/AppShell'
-import { InsightsTabs } from '@/components/layout/InsightsTabs'
+import { ActivityTabs } from '@/components/layout/ActivityTabs'
 
-export default async function AnalyticsLayout({ children }: { children: React.ReactNode }) {
+export default async function AccountsLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   return (
     <AppShell userEmail={user?.email}>
-      <InsightsTabs />
+      <ActivityTabs />
       {children}
     </AppShell>
   )

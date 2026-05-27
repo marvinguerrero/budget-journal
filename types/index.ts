@@ -50,10 +50,32 @@ export interface IncomeSource {
   created_at: string
 }
 
+export type AccountType = 'cash' | 'bank' | 'ewallet' | 'credit' | 'savings' | 'investment'
+
+export interface FinancialAccount {
+  id: string
+  user_id: string
+  name: string
+  emoji: string
+  color: string
+  type: AccountType
+  balance: number
+  created_at: string
+}
+
+export interface FinancialAccountFormData {
+  name: string
+  emoji: string
+  color: string
+  type: AccountType
+  balance: number
+}
+
 export interface IncomeEntry {
   id: string
   user_id: string
   income_source_id: string
+  account_id: string | null
   amount: number
   note: string
   received_at: string
@@ -68,6 +90,7 @@ export interface IncomeSourceFormData {
 
 export interface IncomeEntryFormData {
   income_source_id: string
+  account_id?: string | null
   amount: number
   note: string
   received_at: string
@@ -111,6 +134,7 @@ export interface Expense {
   category: string
   note: string
   payment_method?: string
+  account_id?: string | null
   created_at: string
 }
 
@@ -148,6 +172,7 @@ export interface ExpenseFormData {
   category: string
   note: string
   payment_method?: string
+  account_id?: string | null
   created_at?: string
 }
 

@@ -54,6 +54,20 @@ export const PRESET_EMOJIS_INCOME = [
   '💡','🌐','📦','🎯','🏆','⭐','🎪','🎓',
 ]
 
+export const ACCOUNT_TYPES = [
+  { value: 'cash',       label: 'Cash',        emoji: '💵' },
+  { value: 'bank',       label: 'Bank',        emoji: '🏦' },
+  { value: 'ewallet',    label: 'E-Wallet',    emoji: '📱' },
+  { value: 'credit',     label: 'Credit Card', emoji: '💳' },
+  { value: 'savings',    label: 'Savings',     emoji: '🏧' },
+  { value: 'investment', label: 'Investment',  emoji: '📈' },
+] as const
+
+export const PRESET_EMOJIS_ACCOUNTS = [
+  '💵','🏦','📱','💳','🏧','📈','💰','🪙',
+  '🏢','💼','💎','🎯','🏠','🚀','⭐','🔐',
+]
+
 // Backwards-compat lookup maps (used by charts / analytics that receive raw text values)
 export const CATEGORY_COLORS: Record<string, string> = Object.fromEntries(
   DEFAULT_CATEGORIES.map((c) => [c.name, c.color])

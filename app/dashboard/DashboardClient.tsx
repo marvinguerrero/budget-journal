@@ -1,7 +1,8 @@
 'use client'
 
 import { useMemo, useEffect } from 'react'
-import { Expense, Budget, IncomeEntry } from '@/types'
+import { Expense, Budget, IncomeEntry, FinancialAccount } from '@/types'
+import { ACCOUNT_TYPES } from '@/lib/constants'
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/constants'
 import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
 import { StatsCard } from '@/components/dashboard/StatsCard'
@@ -20,6 +21,7 @@ interface DashboardClientProps {
   initialExpenses: Expense[]
   initialBudgets: Budget[]
   initialIncomeEntries: IncomeEntry[]
+  initialAccounts: FinancialAccount[]
   userEmail: string
   month: number
   year: number
@@ -29,6 +31,7 @@ export function DashboardClient({
   initialExpenses,
   initialBudgets,
   initialIncomeEntries,
+  initialAccounts,
   userEmail,
   month,
   year,
@@ -46,6 +49,14 @@ export function DashboardClient({
     () => initialIncomeEntries.reduce((s, e) => s + e.amount, 0),
     [initialIncomeEntries]
   )
+
+  const totalBalance = useMemo(
+    () => initialAccounts.reduce((s, a) => s + a.balance, 0),
+    [initialAccounts]
+  )
+
+  const accountTypeLabel = (type: FinancialAccount['type']) =>
+    ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? type
 
   const stats = useMemo(() => {
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
@@ -107,6 +118,44 @@ export function DashboardClient({
           {getMonthName(month)} {year} overview
         </p>
       </div>
+
+      {/* Accounts overview */}
+      {initialAccounts.length > 0 && (
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">💰</span>
+              <p className="text-sm font-semibold">My Accounts</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-bold tabular-nums">{formatCurrency(totalBalance)}</p>
+              <p className="text-[10px] text-muted-foreground">total balance</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+            {initialAccounts.map((acc) => (
+              <div
+                key={acc.id}
+                className="flex items-center gap-2.5 p-2.5 rounded-xl bg-accent/40 border border-border/50"
+              >
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0 bg-accent/60">
+                  {acc.emoji}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold truncate">{acc.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{accountTypeLabel(acc.type)}</p>
+                  <p className={`text-xs font-bold tabular-nums ${acc.balance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {formatCurrency(acc.balance)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <a href="/settings" className="block text-center text-xs text-primary font-medium hover:underline pt-0.5">
+            Manage accounts →
+          </a>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatsCard
