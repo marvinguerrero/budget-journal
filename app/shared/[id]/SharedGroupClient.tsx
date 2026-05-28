@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   SharedGroup, SharedGroupMember, SharedBudget, SharedExpense,
-  SharedExpenseSplit, PermissionRequest, SplitMode,
+  SharedExpenseSplit, SharedExpenseSettlement, PermissionRequest, SplitMode,
 } from '@/types'
 import {
   getSharedGroupDetails, inviteMember, removeMember, leaveGroup,
@@ -15,8 +15,12 @@ import {
   createSharedExpense, updateSharedExpense, deleteSharedExpense, SplitInput,
 } from '@/services/sharedExpenses'
 import {
+  createSettlement, confirmSettlement, rejectSettlement,
+} from '@/services/settlements'
+import {
   createPermissionRequest, approvePermissionRequest, rejectPermissionRequest,
 } from '@/services/permissionRequests'
+import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { MemberCapabilities, resolveCapabilities } from '@/lib/permissions'
 import { MembersSection } from '@/components/shared/MembersSection'
 import { SharedBudgetProgress } from '@/components/shared/SharedBudgetProgress'
@@ -44,6 +48,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import {
   ArrowLeft, Plus, MoreHorizontal, Trash2, LogOut, Target, Users,
+  CheckCircle2, XCircle, Clock, Wallet,
 } from 'lucide-react'
 
 interface Props {
@@ -241,14 +246,28 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const isMobile = useIsMobile()
 
   // ── core data ──────────────────────────────────────────────────
-  const [group, setGroup]       = useState<SharedGroup | null>(null)
-  const [ownerEmail, setOwnerEmail] = useState('')
-  const [members, setMembers]   = useState<SharedGroupMember[]>([])
-  const [budgets, setBudgets]   = useState<SharedBudget[]>([])
-  const [expenses, setExpenses] = useState<SharedExpense[]>([])
-  const [splits, setSplits]     = useState<SharedExpenseSplit[]>([])
-  const [requests, setRequests] = useState<PermissionRequest[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [group, setGroup]             = useState<SharedGroup | null>(null)
+  const [ownerEmail, setOwnerEmail]   = useState('')
+  const [members, setMembers]         = useState<SharedGroupMember[]>([])
+  const [budgets, setBudgets]         = useState<SharedBudget[]>([])
+  const [expenses, setExpenses]       = useState<SharedExpense[]>([])
+  const [splits, setSplits]           = useState<SharedExpenseSplit[]>([])
+  const [settlements, setSettlements] = useState<SharedExpenseSettlement[]>([])
+  const [requests, setRequests]       = useState<PermissionRequest[]>([])
+  const [isLoading, setIsLoading]     = useState(true)
+
+  const { accounts } = useFinancialAccounts()
+
+  // ── Settle dialog state ────────────────────────────────────────
+  const [settlingBalance,  setSettlingBalance]  = useState<NetBalance | null>(null)
+  const [settleAccountId,  setSettleAccountId]  = useState('')
+  const [settleNote,       setSettleNote]       = useState('')
+  const [isSavingSettle,   setIsSavingSettle]   = useState(false)
+
+  // ── Confirm/Reject dialog state ────────────────────────────────
+  const [confirmingSettlement,   setConfirmingSettlement]   = useState<SharedExpenseSettlement | null>(null)
+  const [confirmAccountId,       setConfirmAccountId]       = useState('')
+  const [isSavingConfirm,        setIsSavingConfirm]        = useState(false)
 
   // ── UI state ───────────────────────────────────────────────────
   const [activeTab, setActiveTab]     = useState<'overview' | 'chat'>('overview')
@@ -333,6 +352,16 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       }
     }
 
+    // Subtract confirmed settlements so they no longer show as outstanding debt
+    for (const st of settlements) {
+      if (st.status !== 'confirmed') continue
+      const d = st.payer_user_id
+      const c = st.receiver_user_id
+      if (net[d]?.[c] !== undefined) {
+        net[d][c] = Math.max(0, net[d][c] - st.amount)
+      }
+    }
+
     const result: NetBalance[] = []
     const done = new Set<string>()
 
@@ -342,9 +371,9 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         if (done.has(key)) continue
         done.add(key)
 
-        const aOwesB   = net[debtorId]?.[creditorId] ?? 0
-        const bOwesA   = net[creditorId]?.[debtorId] ?? 0
-        const netAmt   = aOwesB - bOwesA
+        const aOwesB = net[debtorId]?.[creditorId] ?? 0
+        const bOwesA = net[creditorId]?.[debtorId] ?? 0
+        const netAmt = aOwesB - bOwesA
 
         if (netAmt > 0.005) {
           result.push({ debtorId, debtorEmail: emailFor[debtorId], creditorId, creditorEmail: emailFor[creditorId], amount: netAmt })
@@ -355,7 +384,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
 
     return result.sort((a, b) => b.amount - a.amount)
-  }, [expenses, splitsByExpense])
+  }, [expenses, splitsByExpense, settlements])
 
   const totalBudget    = useMemo(() => budgets.reduce((s, b) => s + b.amount, 0), [budgets])
   const totalSpent     = useMemo(() => expenses.reduce((s, e) => s + e.amount, 0), [expenses])
@@ -374,6 +403,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       setBudgets(details.budgets)
       setExpenses(details.expenses)
       setSplits(details.splits)
+      setSettlements(details.settlements)
       setRequests(details.requests)
     } catch {
       toast.error('Failed to load group')
@@ -662,6 +692,66 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
+  // ── settlement handlers ────────────────────────────────────────
+
+  const handleSettle = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!settlingBalance) return
+    setIsSavingSettle(true)
+    try {
+      const s = await createSettlement({
+        groupId,
+        receiverUserId: settlingBalance.creditorId,
+        receiverEmail:  settlingBalance.creditorEmail,
+        amount:         settlingBalance.amount,
+        payerAccountId: settleAccountId || null,
+        note:           settleNote,
+      })
+      setSettlements((prev) => [s, ...prev])
+      setSettlingBalance(null)
+      setSettleAccountId('')
+      setSettleNote('')
+      toast.success('Payment sent — waiting for confirmation')
+    } catch {
+      toast.error('Failed to send settlement')
+    } finally {
+      setIsSavingSettle(false)
+    }
+  }
+
+  const handleConfirmSettlement = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!confirmingSettlement) return
+    setIsSavingConfirm(true)
+    try {
+      await confirmSettlement(confirmingSettlement.id, confirmAccountId || null)
+      setSettlements((prev) =>
+        prev.map((s) => s.id === confirmingSettlement.id
+          ? { ...s, status: 'confirmed' as const, confirmed_at: new Date().toISOString(), receiver_account_id: confirmAccountId || null }
+          : s)
+      )
+      setConfirmingSettlement(null)
+      setConfirmAccountId('')
+      toast.success('Payment confirmed!')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to confirm')
+    } finally {
+      setIsSavingConfirm(false)
+    }
+  }
+
+  const handleRejectSettlement = async (id: string) => {
+    try {
+      await rejectSettlement(id)
+      setSettlements((prev) =>
+        prev.map((s) => s.id === id ? { ...s, status: 'rejected' as const } : s)
+      )
+      toast.success('Payment rejected')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reject')
+    }
+  }
+
   // ── add expense form ───────────────────────────────────────────
   const addExpenseAmt = parseFloat(expenseAmount) || 0
 
@@ -942,7 +1032,107 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
           </div>
 
           {/* ── Balances ── */}
-          <BalanceSummary balances={netBalances} currentUserId={currentUserId} />
+          <BalanceSummary
+            balances={netBalances}
+            currentUserId={currentUserId}
+            onSettle={setSettlingBalance}
+          />
+
+          {/* ── Pending Confirmations (receiver) ── */}
+          {settlements.some((s) => s.receiver_user_id === currentUserId && s.status === 'pending_confirmation') && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">Pending Confirmations</p>
+              </div>
+              <div className="space-y-2">
+                {settlements
+                  .filter((s) => s.receiver_user_id === currentUserId && s.status === 'pending_confirmation')
+                  .map((s) => (
+                    <div key={s.id} className="flex items-center gap-3 p-3 rounded-xl bg-background border border-border">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold truncate">
+                          {s.payer_email.split('@')[0]} paid you
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {s.note || 'Settlement payment'}
+                        </p>
+                      </div>
+                      <span className="font-bold tabular-nums text-sm text-emerald-600 dark:text-emerald-400 flex-shrink-0">
+                        +{formatCurrency(s.amount)}
+                      </span>
+                      <div className="flex gap-1.5 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingSettlement(s)}
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-600 transition-colors"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectSettlement(s.id)}
+                          className="px-2.5 py-1.5 rounded-lg bg-destructive/10 text-destructive text-xs font-semibold hover:bg-destructive/20 transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Settlement History ── */}
+          {settlements.filter((s) => s.payer_user_id === currentUserId || s.receiver_user_id === currentUserId).length > 0 && (
+            <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+              <p className="text-sm font-semibold">Settlement History</p>
+              <div className="space-y-2">
+                {settlements
+                  .filter((s) => s.payer_user_id === currentUserId || s.receiver_user_id === currentUserId)
+                  .map((s) => {
+                    const isSender = s.payer_user_id === currentUserId
+                    const counterEmail = isSender ? s.receiver_email : s.payer_email
+                    const counterName  = counterEmail.split('@')[0]
+
+                    const statusIcon  = s.status === 'confirmed'
+                      ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                      : s.status === 'rejected'
+                        ? <XCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
+                        : <Clock className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+
+                    const statusLabel = s.status === 'confirmed'
+                      ? (isSender ? `${counterName} confirmed` : 'Confirmed')
+                      : s.status === 'rejected'
+                        ? 'Rejected'
+                        : 'Pending confirmation'
+
+                    return (
+                      <div key={s.id} className="flex items-center gap-3 p-3 rounded-xl bg-accent/40">
+                        <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-base flex-shrink-0">
+                          {isSender ? '💸' : '💰'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {isSender ? `Paid ${counterName}` : `Received from ${counterName}`}
+                          </p>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {statusIcon}
+                            <span className="text-xs text-muted-foreground">{statusLabel}</span>
+                          </div>
+                        </div>
+                        <span className={`font-bold tabular-nums text-sm flex-shrink-0 ${
+                          s.status === 'rejected' ? 'text-muted-foreground line-through' :
+                          isSender ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
+                        }`}>
+                          {isSender ? '-' : '+'}{formatCurrency(s.amount)}
+                        </span>
+                      </div>
+                    )
+                  })}
+              </div>
+            </div>
+          )}
 
           {/* ── Add Expense FAB ── */}
           <Button
@@ -1158,6 +1348,173 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>{isSaving ? 'Inviting…' : 'Add Member'}</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Settle dialog (payer initiates) ── */}
+      <Dialog open={!!settlingBalance} onOpenChange={(o) => { if (!o) { setSettlingBalance(null); setSettleAccountId(''); setSettleNote('') } }}>
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Settle Payment</DialogTitle>
+          </DialogHeader>
+          {settlingBalance && (
+            <form onSubmit={handleSettle} className="space-y-4">
+              {/* Summary */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-amber-500/8 border border-amber-500/20">
+                <div>
+                  <p className="text-xs text-muted-foreground">You owe</p>
+                  <p className="text-sm font-semibold">{settlingBalance.creditorEmail.split('@')[0]}</p>
+                </div>
+                <span className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                  {formatCurrency(settlingBalance.amount)}
+                </span>
+              </div>
+
+              {/* Account selector */}
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold flex items-center gap-1.5">
+                  <Wallet className="w-3.5 h-3.5" />
+                  Pay from account <span className="text-muted-foreground font-normal">(optional)</span>
+                </Label>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSettleAccountId('')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                      !settleAccountId
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    No account
+                  </button>
+                  {accounts.map((acc) => (
+                    <button
+                      key={acc.id}
+                      type="button"
+                      onClick={() => setSettleAccountId(acc.id)}
+                      className={cn(
+                        'flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                        settleAccountId === acc.id
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {acc.emoji} {acc.name}
+                    </button>
+                  ))}
+                </div>
+                {settleAccountId && (
+                  <p className="text-xs text-muted-foreground">
+                    {formatCurrency(settlingBalance.amount)} will be deducted from this account immediately.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Note <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <Input
+                  placeholder="e.g. GCash transfer"
+                  value={settleNote}
+                  onChange={(e) => setSettleNote(e.target.value)}
+                  className="h-11 rounded-xl"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
+                  onClick={() => { setSettlingBalance(null); setSettleAccountId(''); setSettleNote('') }}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingSettle}>
+                  {isSavingSettle ? 'Sending…' : 'Mark as Paid'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Confirm receipt dialog (receiver confirms) ── */}
+      <Dialog open={!!confirmingSettlement} onOpenChange={(o) => { if (!o) { setConfirmingSettlement(null); setConfirmAccountId('') } }}>
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Confirm Payment Received</DialogTitle>
+          </DialogHeader>
+          {confirmingSettlement && (
+            <form onSubmit={handleConfirmSettlement} className="space-y-4">
+              {/* Summary */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-500/8 border border-emerald-500/20">
+                <div>
+                  <p className="text-xs text-muted-foreground">Payment from</p>
+                  <p className="text-sm font-semibold">{confirmingSettlement.payer_email.split('@')[0]}</p>
+                  {confirmingSettlement.note && (
+                    <p className="text-xs text-muted-foreground mt-0.5">{confirmingSettlement.note}</p>
+                  )}
+                </div>
+                <span className="text-xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                  +{formatCurrency(confirmingSettlement.amount)}
+                </span>
+              </div>
+
+              {/* Account selector */}
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold flex items-center gap-1.5">
+                  <Wallet className="w-3.5 h-3.5" />
+                  Add to account <span className="text-muted-foreground font-normal">(optional)</span>
+                </Label>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmAccountId('')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                      !confirmAccountId
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    Don't add
+                  </button>
+                  {accounts.map((acc) => (
+                    <button
+                      key={acc.id}
+                      type="button"
+                      onClick={() => setConfirmAccountId(acc.id)}
+                      className={cn(
+                        'flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                        confirmAccountId === acc.id
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {acc.emoji} {acc.name}
+                    </button>
+                  ))}
+                </div>
+                {confirmAccountId && (
+                  <p className="text-xs text-muted-foreground">
+                    {formatCurrency(confirmingSettlement.amount)} will be added to this account.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1 h-11 rounded-xl border-destructive/30 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                  onClick={() => { handleRejectSettlement(confirmingSettlement.id); setConfirmingSettlement(null) }}
+                >
+                  Reject
+                </Button>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingConfirm}>
+                  {isSavingConfirm ? 'Confirming…' : 'Confirm Received'}
+                </Button>
+              </div>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>

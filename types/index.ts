@@ -105,12 +105,39 @@ export interface IncomeEntryFormData {
 export interface AppNotification {
   id: string
   user_id: string
-  type: 'chat_message' | 'group_invite' | 'permission_approved' | 'member_joined'
+  type:
+    | 'chat_message'
+    | 'group_invite'
+    | 'permission_approved'
+    | 'member_joined'
+    | 'settlement_received'
+    | 'settlement_confirmed'
+    | 'settlement_rejected'
   title: string
   message: string
   is_read: boolean
   related_id: string | null
   created_at: string
+}
+
+export type SettlementStatus = 'pending_confirmation' | 'confirmed' | 'rejected'
+
+export interface SharedExpenseSettlement {
+  id: string
+  group_id: string
+  payer_user_id: string
+  payer_email: string
+  receiver_user_id: string
+  receiver_email: string
+  amount: number
+  payer_account_id: string | null
+  receiver_account_id: string | null
+  expense_id: string | null
+  income_entry_id: string | null
+  status: SettlementStatus
+  note: string
+  created_at: string
+  confirmed_at: string | null
 }
 
 export interface GroupMessage {

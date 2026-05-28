@@ -62,10 +62,12 @@ export const PRESET_EMOJIS_ACCOUNTS = [
 ]
 
 // Backwards-compat lookup maps (used by charts / analytics that receive raw text values)
-export const CATEGORY_COLORS: Record<string, string> = Object.fromEntries(
-  DEFAULT_CATEGORIES.map((c) => [c.name, c.color])
-)
+export const CATEGORY_COLORS: Record<string, string> = {
+  ...Object.fromEntries(DEFAULT_CATEGORIES.map((c) => [c.name, c.color])),
+  Settlement: '#6366F1',
+}
 
-export const CATEGORY_ICONS: Record<string, string> = Object.fromEntries(
-  DEFAULT_CATEGORIES.map((c) => [c.name, c.icon])
-)
+export const CATEGORY_ICONS: Record<string, string> = {
+  ...Object.fromEntries(DEFAULT_CATEGORIES.map((c) => [c.name, c.icon])),
+  Settlement: '💸',
+}

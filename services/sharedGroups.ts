@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
-import { SharedGroup, SharedGroupMember, SharedBudget, SharedExpense, SharedExpenseSplit, PermissionRequest } from '@/types'
+import { SharedGroup, SharedGroupMember, SharedBudget, SharedExpense, SharedExpenseSplit, SharedExpenseSettlement, PermissionRequest } from '@/types'
 
 export async function getMySharedGroups(): Promise<SharedGroup[]> {
   const supabase = createClient()
@@ -18,15 +18,17 @@ export async function getSharedGroupDetails(id: string): Promise<{
   budgets: SharedBudget[]
   expenses: SharedExpense[]
   splits: SharedExpenseSplit[]
+  settlements: SharedExpenseSettlement[]
   requests: PermissionRequest[]
 }> {
   const supabase = createClient()
-  const [groupRes, membersRes, budgetsRes, expensesRes, requestsRes] = await Promise.all([
+  const [groupRes, membersRes, budgetsRes, expensesRes, requestsRes, settlementsRes] = await Promise.all([
     supabase.from('shared_groups').select('*').eq('id', id).single(),
     supabase.from('shared_group_members').select('*').eq('group_id', id).order('created_at'),
     supabase.from('shared_budgets').select('*').eq('group_id', id).order('created_at'),
     supabase.from('shared_expenses').select('*').eq('group_id', id).order('created_at', { ascending: false }),
     supabase.from('permission_requests').select('*').eq('group_id', id).eq('status', 'pending').order('created_at'),
+    supabase.from('shared_expense_settlements').select('*').eq('group_id', id).order('created_at', { ascending: false }),
   ])
   if (groupRes.error) throw groupRes.error
 
@@ -48,6 +50,7 @@ export async function getSharedGroupDetails(id: string): Promise<{
     budgets: budgetsRes.data || [],
     expenses: expensesRes.data || [],
     splits: splitsRes.data || [],
+    settlements: settlementsRes.data || [],
     requests: requestsRes.data || [],
   }
 }

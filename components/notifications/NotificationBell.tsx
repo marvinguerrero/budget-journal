@@ -20,10 +20,13 @@ import { Bell, CheckCheck } from 'lucide-react'
 import { formatRelativeTime } from '@/utils/format'
 
 const TYPE_ICON: Record<string, string> = {
-  chat_message:       '💬',
-  group_invite:       '👥',
-  permission_approved:'✅',
-  member_joined:      '👤',
+  chat_message:         '💬',
+  group_invite:         '👥',
+  permission_approved:  '✅',
+  member_joined:        '👤',
+  settlement_received:  '💸',
+  settlement_confirmed: '✅',
+  settlement_rejected:  '❌',
 }
 
 export function NotificationBell() {
