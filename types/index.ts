@@ -122,6 +122,8 @@ export interface GroupMessage {
   created_at: string
 }
 
+export type SplitMode = 'equal' | 'custom'
+
 export interface SharedExpense {
   id: string
   group_id: string
@@ -130,6 +132,18 @@ export interface SharedExpense {
   category: string
   amount: number
   note: string
+  paid_by_user_id: string | null
+  paid_by_email: string
+  split_mode: SplitMode
+  created_at: string
+}
+
+export interface SharedExpenseSplit {
+  id: string
+  expense_id: string
+  debtor_user_id: string
+  debtor_email: string
+  amount: number
   created_at: string
 }
 

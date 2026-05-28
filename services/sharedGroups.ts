@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
-import { SharedGroup, SharedGroupMember, SharedBudget, SharedExpense, PermissionRequest } from '@/types'
+import { SharedGroup, SharedGroupMember, SharedBudget, SharedExpense, SharedExpenseSplit, PermissionRequest } from '@/types'
 
 export async function getMySharedGroups(): Promise<SharedGroup[]> {
   const supabase = createClient()
@@ -17,6 +17,7 @@ export async function getSharedGroupDetails(id: string): Promise<{
   members: SharedGroupMember[]
   budgets: SharedBudget[]
   expenses: SharedExpense[]
+  splits: SharedExpenseSplit[]
   requests: PermissionRequest[]
 }> {
   const supabase = createClient()
@@ -35,12 +36,18 @@ export async function getSharedGroupDetails(id: string): Promise<{
     .eq('id', groupRes.data.owner_id)
     .single()
 
+  const expenseIds = (expensesRes.data ?? []).map((e) => e.id)
+  const splitsRes = expenseIds.length > 0
+    ? await supabase.from('shared_expense_splits').select('*').in('expense_id', expenseIds)
+    : { data: [] as SharedExpenseSplit[], error: null }
+
   return {
     group: groupRes.data,
     ownerEmail: ownerRes.data?.email ?? '',
     members: membersRes.data || [],
     budgets: budgetsRes.data || [],
     expenses: expensesRes.data || [],
+    splits: splitsRes.data || [],
     requests: requestsRes.data || [],
   }
 }

@@ -2,48 +2,38 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { SharedGroup, SharedGroupMember, SharedBudget, SharedExpense, PermissionRequest } from '@/types'
 import {
-  getSharedGroupDetails,
-  inviteMember,
-  removeMember,
-  leaveGroup,
-  deleteSharedGroup,
-  updateMemberPermissions,
+  SharedGroup, SharedGroupMember, SharedBudget, SharedExpense,
+  SharedExpenseSplit, PermissionRequest, SplitMode,
+} from '@/types'
+import {
+  getSharedGroupDetails, inviteMember, removeMember, leaveGroup,
+  deleteSharedGroup, updateMemberPermissions,
 } from '@/services/sharedGroups'
 import { createSharedBudget, updateSharedBudget, deleteSharedBudget } from '@/services/sharedBudgets'
-import { createSharedExpense, updateSharedExpense, deleteSharedExpense } from '@/services/sharedExpenses'
 import {
-  createPermissionRequest,
-  approvePermissionRequest,
-  rejectPermissionRequest,
+  createSharedExpense, updateSharedExpense, deleteSharedExpense, SplitInput,
+} from '@/services/sharedExpenses'
+import {
+  createPermissionRequest, approvePermissionRequest, rejectPermissionRequest,
 } from '@/services/permissionRequests'
 import { MemberCapabilities, resolveCapabilities } from '@/lib/permissions'
 import { MembersSection } from '@/components/shared/MembersSection'
 import { SharedBudgetProgress } from '@/components/shared/SharedBudgetProgress'
 import { SharedExpenseItem } from '@/components/shared/SharedExpenseItem'
+import { BalanceSummary, NetBalance } from '@/components/shared/BalanceSummary'
 import { GroupChat } from '@/components/shared/GroupChat'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { BottomSheet } from '@/components/common/BottomSheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -53,13 +43,7 @@ import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import {
-  ArrowLeft,
-  Plus,
-  MoreHorizontal,
-  Trash2,
-  LogOut,
-  Target,
-  Users,
+  ArrowLeft, Plus, MoreHorizontal, Trash2, LogOut, Target, Users,
 } from 'lucide-react'
 
 interface Props {
@@ -68,45 +52,245 @@ interface Props {
   currentUserEmail: string
 }
 
+interface Participant { user_id: string; email: string }
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+function shortName(userId: string, email: string, currentUserId: string) {
+  return userId === currentUserId ? 'You' : email.split('@')[0]
+}
+
+// ── module-level sub-components (must NOT be nested inside SharedGroupClient) ─
+// Defining them inside the parent causes remount on every keystroke because
+// React sees a new component type each render, resetting input focus/value.
+
+interface PaidBySelectorProps {
+  participants: Participant[]
+  currentUserId: string
+  value: string
+  onChange: (id: string) => void
+  onEmailChange: (email: string) => void
+}
+
+function PaidBySelector({ participants, currentUserId, value, onChange, onEmailChange }: PaidBySelectorProps) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-sm font-semibold">Who paid?</Label>
+      <div className="flex flex-wrap gap-1.5">
+        {participants.map((p) => (
+          <button
+            key={p.user_id}
+            type="button"
+            onClick={() => { onChange(p.user_id); onEmailChange(p.email) }}
+            className={cn(
+              'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+              value === p.user_id
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {shortName(p.user_id, p.email, currentUserId)}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+interface SplitSectionProps {
+  participants: Participant[]
+  currentUserId: string
+  mode: SplitMode
+  setMode: (m: SplitMode) => void
+  included: Record<string, boolean>
+  setIncluded: (v: Record<string, boolean>) => void
+  customAmts: Record<string, string>
+  setCustomAmts: (v: Record<string, string>) => void
+  totalAmt: number
+}
+
+function SplitSection({
+  participants, currentUserId, mode, setMode, included, setIncluded,
+  customAmts, setCustomAmts, totalAmt,
+}: SplitSectionProps) {
+  const active      = participants.filter((p) => included[p.user_id] !== false)
+  const equalShare  = active.length > 0 ? totalAmt / active.length : 0
+  const customTotal = participants.reduce((s, p) => s + (parseFloat(customAmts[p.user_id] || '0') || 0), 0)
+  const customValid = totalAmt > 0 && Math.abs(customTotal - totalAmt) <= 0.01
+
+  return (
+    <div className="space-y-3">
+      {/* Mode toggle */}
+      <div className="flex items-center gap-2">
+        <Label className="text-sm font-semibold">Split</Label>
+        <div className="flex gap-1 p-0.5 rounded-lg bg-muted ml-auto">
+          {(['equal', 'custom'] as SplitMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                'px-3 py-1 rounded-md text-xs font-medium transition-colors capitalize',
+                mode === m
+                  ? 'bg-background shadow-sm text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {m === 'equal' ? '⚖️ Equal' : '✏️ Custom'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode === 'equal' && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            {participants.map((p) => {
+              const on = included[p.user_id] !== false
+              return (
+                <button
+                  key={p.user_id}
+                  type="button"
+                  onClick={() => setIncluded({ ...included, [p.user_id]: !on })}
+                  className={cn(
+                    'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                    on
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-muted/50 text-muted-foreground'
+                  )}
+                >
+                  {shortName(p.user_id, p.email, currentUserId)}
+                </button>
+              )
+            })}
+          </div>
+          {active.length > 0 && totalAmt > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {formatCurrency(equalShare)} each · {active.length} {active.length === 1 ? 'person' : 'people'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {mode === 'custom' && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Enter each person's share</span>
+            <span className={cn(
+              'font-semibold tabular-nums',
+              customValid ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+            )}>
+              {formatCurrency(customTotal)} / {formatCurrency(totalAmt)}
+            </span>
+          </div>
+          <div className="space-y-1.5">
+            {participants.map((p) => (
+              <div key={p.user_id} className="flex items-center gap-2">
+                <span className="text-sm w-20 truncate flex-shrink-0 text-foreground">
+                  {shortName(p.user_id, p.email, currentUserId)}
+                </span>
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-medium">₱</span>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    placeholder="0"
+                    value={customAmts[p.user_id] ?? ''}
+                    onChange={(e) => setCustomAmts({ ...customAmts, [p.user_id]: e.target.value })}
+                    className="pl-7 h-9 rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          {!customValid && totalAmt > 0 && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Remaining: {formatCurrency(totalAmt - customTotal)}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function computeSplits(
+  mode: SplitMode,
+  participants: Participant[],
+  included: Record<string, boolean>,
+  customAmounts: Record<string, string>,
+  totalAmount: number,
+): SplitInput[] {
+  if (mode === 'equal') {
+    const active = participants.filter((p) => included[p.user_id] !== false)
+    if (active.length === 0) return []
+    const share = totalAmount / active.length
+    return active.map((p) => ({ user_id: p.user_id, email: p.email, amount: parseFloat(share.toFixed(2)) }))
+  }
+  return participants
+    .map((p) => ({ user_id: p.user_id, email: p.email, amount: parseFloat(customAmounts[p.user_id] || '0') || 0 }))
+    .filter((s) => s.amount > 0)
+}
+
+// ── main component ────────────────────────────────────────────────────────────
+
 export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: Props) {
-  const router = useRouter()
+  const router   = useRouter()
   const isMobile = useIsMobile()
 
-  const [group, setGroup] = useState<SharedGroup | null>(null)
+  // ── core data ──────────────────────────────────────────────────
+  const [group, setGroup]       = useState<SharedGroup | null>(null)
   const [ownerEmail, setOwnerEmail] = useState('')
-  const [members, setMembers] = useState<SharedGroupMember[]>([])
-  const [budgets, setBudgets] = useState<SharedBudget[]>([])
+  const [members, setMembers]   = useState<SharedGroupMember[]>([])
+  const [budgets, setBudgets]   = useState<SharedBudget[]>([])
   const [expenses, setExpenses] = useState<SharedExpense[]>([])
+  const [splits, setSplits]     = useState<SharedExpenseSplit[]>([])
   const [requests, setRequests] = useState<PermissionRequest[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
-  // dialog open states
-  const [activeTab, setActiveTab] = useState<'overview' | 'chat'>('overview')
+  // ── UI state ───────────────────────────────────────────────────
+  const [activeTab, setActiveTab]     = useState<'overview' | 'chat'>('overview')
   const [showAddExpense, setShowAddExpense] = useState(false)
-  const [showAddBudget, setShowAddBudget] = useState(false)
-  const [showInvite, setShowInvite] = useState(false)
+  const [showAddBudget,  setShowAddBudget]  = useState(false)
+  const [showInvite,     setShowInvite]     = useState(false)
 
-  // form state
-  const [expenseCategory, setExpenseCategory] = useState(DEFAULT_CATEGORIES[0].name)
-  const [expenseAmount, setExpenseAmount] = useState('')
-  const [expenseNote, setExpenseNote] = useState('')
+  // ── Add expense form ───────────────────────────────────────────
+  const [expenseCategory,    setExpenseCategory]    = useState(DEFAULT_CATEGORIES[0].name)
+  const [expenseAmount,      setExpenseAmount]      = useState('')
+  const [expenseNote,        setExpenseNote]        = useState('')
+  const [expensePaidById,    setExpensePaidById]    = useState(currentUserId)
+  const [expensePaidByEmail, setExpensePaidByEmail] = useState(currentUserEmail)
+  const [expenseSplitMode,   setExpenseSplitMode]   = useState<SplitMode>('equal')
+  const [expenseIncluded,    setExpenseIncluded]    = useState<Record<string, boolean>>({})
+  const [expenseCustomAmts,  setExpenseCustomAmts]  = useState<Record<string, string>>({})
+
+  // ── Edit expense form ──────────────────────────────────────────
+  const [editingExpense,         setEditingExpense]         = useState<SharedExpense | null>(null)
+  const [editExpenseCategory,    setEditExpenseCategory]    = useState('')
+  const [editExpenseAmount,      setEditExpenseAmount]      = useState('')
+  const [editExpenseNote,        setEditExpenseNote]        = useState('')
+  const [editExpensePaidById,    setEditExpensePaidById]    = useState(currentUserId)
+  const [editExpensePaidByEmail, setEditExpensePaidByEmail] = useState(currentUserEmail)
+  const [editExpenseSplitMode,   setEditExpenseSplitMode]   = useState<SplitMode>('equal')
+  const [editExpenseIncluded,    setEditExpenseIncluded]    = useState<Record<string, boolean>>({})
+  const [editExpenseCustomAmts,  setEditExpenseCustomAmts]  = useState<Record<string, string>>({})
+
+  // ── Budget form ────────────────────────────────────────────────
   const [budgetCategory, setBudgetCategory] = useState('')
-  const [budgetAmount, setBudgetAmount] = useState('')
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteCanEdit, setInviteCanEdit] = useState(false)
-  const [inviteCanInvite, setInviteCanInvite] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
-
-  // edit expense
-  const [editingExpense, setEditingExpense] = useState<SharedExpense | null>(null)
-  const [editExpenseCategory, setEditExpenseCategory] = useState('')
-  const [editExpenseAmount, setEditExpenseAmount] = useState('')
-  const [editExpenseNote, setEditExpenseNote] = useState('')
-
-  // edit budget
-  const [editingBudget, setEditingBudget] = useState<SharedBudget | null>(null)
+  const [budgetAmount,   setBudgetAmount]   = useState('')
+  const [editingBudget,  setEditingBudget]  = useState<SharedBudget | null>(null)
   const [editBudgetAmount, setEditBudgetAmount] = useState('')
 
+  // ── Invite form ────────────────────────────────────────────────
+  const [inviteEmail,     setInviteEmail]     = useState('')
+  const [inviteCanEdit,   setInviteCanEdit]   = useState(false)
+  const [inviteCanInvite, setInviteCanInvite] = useState(false)
+
+  const [isSaving, setIsSaving] = useState(false)
+
+  // ── derived ────────────────────────────────────────────────────
   const isOwner = group?.owner_id === currentUserId
 
   const myPerms: MemberCapabilities = useMemo(() => {
@@ -114,6 +298,73 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     return resolveCapabilities(isOwner, myMember)
   }, [isOwner, members, currentUserId])
 
+  const allParticipants: Participant[] = useMemo(() => {
+    if (!group) return []
+    return [
+      { user_id: group.owner_id, email: ownerEmail },
+      ...members.map((m) => ({ user_id: m.user_id, email: m.email })),
+    ]
+  }, [group, ownerEmail, members])
+
+  const splitsByExpense = useMemo(() => {
+    const map = new Map<string, SharedExpenseSplit[]>()
+    for (const s of splits) {
+      const arr = map.get(s.expense_id) ?? []
+      arr.push(s)
+      map.set(s.expense_id, arr)
+    }
+    return map
+  }, [splits])
+
+  const netBalances = useMemo((): NetBalance[] => {
+    const net: Record<string, Record<string, number>> = {}
+    const emailFor: Record<string, string> = {}
+
+    for (const exp of expenses) {
+      const creditorId    = exp.paid_by_user_id ?? exp.user_id
+      const creditorEmail = exp.paid_by_email   || exp.user_email
+      emailFor[creditorId] = creditorEmail
+
+      for (const s of splitsByExpense.get(exp.id) ?? []) {
+        if (s.debtor_user_id === creditorId) continue
+        emailFor[s.debtor_user_id] = s.debtor_email
+        if (!net[s.debtor_user_id]) net[s.debtor_user_id] = {}
+        net[s.debtor_user_id][creditorId] = (net[s.debtor_user_id][creditorId] ?? 0) + s.amount
+      }
+    }
+
+    const result: NetBalance[] = []
+    const done = new Set<string>()
+
+    for (const debtorId of Object.keys(net)) {
+      for (const creditorId of Object.keys(net[debtorId])) {
+        const key = [debtorId, creditorId].sort().join('|')
+        if (done.has(key)) continue
+        done.add(key)
+
+        const aOwesB   = net[debtorId]?.[creditorId] ?? 0
+        const bOwesA   = net[creditorId]?.[debtorId] ?? 0
+        const netAmt   = aOwesB - bOwesA
+
+        if (netAmt > 0.005) {
+          result.push({ debtorId, debtorEmail: emailFor[debtorId], creditorId, creditorEmail: emailFor[creditorId], amount: netAmt })
+        } else if (netAmt < -0.005) {
+          result.push({ debtorId: creditorId, debtorEmail: emailFor[creditorId], creditorId: debtorId, creditorEmail: emailFor[debtorId], amount: -netAmt })
+        }
+      }
+    }
+
+    return result.sort((a, b) => b.amount - a.amount)
+  }, [expenses, splitsByExpense])
+
+  const totalBudget    = useMemo(() => budgets.reduce((s, b) => s + b.amount, 0), [budgets])
+  const totalSpent     = useMemo(() => expenses.reduce((s, e) => s + e.amount, 0), [expenses])
+  const totalRemaining = totalBudget - totalSpent
+
+  const coveredCategories        = new Set(budgets.map((b) => b.category))
+  const availableBudgetCategories = DEFAULT_CATEGORIES.filter((c) => !coveredCategories.has(c.name))
+
+  // ── load ───────────────────────────────────────────────────────
   const load = useCallback(async () => {
     try {
       const details = await getSharedGroupDetails(groupId)
@@ -122,6 +373,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       setMembers(details.members)
       setBudgets(details.budgets)
       setExpenses(details.expenses)
+      setSplits(details.splits)
       setRequests(details.requests)
     } catch {
       toast.error('Failed to load group')
@@ -133,26 +385,31 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
 
   useEffect(() => { load() }, [load])
 
-  // ── Stats ────────────────────────────────────────────────────
-  const totalBudget = useMemo(() => budgets.reduce((s, b) => s + b.amount, 0), [budgets])
-  const totalSpent = useMemo(() => expenses.reduce((s, e) => s + e.amount, 0), [expenses])
-  const totalRemaining = totalBudget - totalSpent
-
-  const coveredCategories = new Set(budgets.map((b) => b.category))
-  const availableBudgetCategories = DEFAULT_CATEGORIES.filter((c) => !coveredCategories.has(c.name))
-
-  // ── Expense handlers ────────────────────────────────────────
+  // ── expense handlers ───────────────────────────────────────────
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault()
     const amt = parseFloat(expenseAmount)
     if (!amt || amt <= 0) return
+
+    if (expenseSplitMode === 'custom') {
+      const total = allParticipants.reduce((s, p) => s + (parseFloat(expenseCustomAmts[p.user_id] || '0') || 0), 0)
+      if (Math.abs(total - amt) > 0.01) {
+        toast.error(`Custom split total (${formatCurrency(total)}) must equal expense amount (${formatCurrency(amt)})`)
+        return
+      }
+    }
+
     setIsSaving(true)
     try {
-      const exp = await createSharedExpense(groupId, expenseCategory, amt, expenseNote)
-      setExpenses((prev) => [exp, ...prev])
+      const computedSplits = computeSplits(expenseSplitMode, allParticipants, expenseIncluded, expenseCustomAmts, amt)
+      const { expense, splits: newSplits } = await createSharedExpense(
+        groupId, expenseCategory, amt, expenseNote,
+        expensePaidById, expensePaidByEmail, expenseSplitMode, computedSplits,
+      )
+      setExpenses((prev) => [expense, ...prev])
+      setSplits((prev) => [...prev, ...newSplits])
       setShowAddExpense(false)
-      setExpenseAmount('')
-      setExpenseNote('')
+      resetAddForm()
       toast.success('Expense added!')
     } catch {
       toast.error('Failed to add expense')
@@ -161,17 +418,93 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
+  const resetAddForm = () => {
+    setExpenseAmount('')
+    setExpenseNote('')
+    setExpensePaidById(currentUserId)
+    setExpensePaidByEmail(currentUserEmail)
+    setExpenseSplitMode('equal')
+    setExpenseIncluded({})
+    setExpenseCustomAmts({})
+  }
+
   const handleDeleteExpense = async (id: string) => {
     try {
       await deleteSharedExpense(id)
       setExpenses((prev) => prev.filter((e) => e.id !== id))
+      setSplits((prev) => prev.filter((s) => s.expense_id !== id))
       toast.success('Expense deleted')
     } catch {
       toast.error('Failed to delete expense')
     }
   }
 
-  // ── Budget handlers ─────────────────────────────────────────
+  const openEditExpense = (expense: SharedExpense) => {
+    setEditingExpense(expense)
+    setEditExpenseCategory(expense.category)
+    setEditExpenseAmount(String(expense.amount))
+    setEditExpenseNote(expense.note)
+
+    const payerId = expense.paid_by_user_id ?? expense.user_id
+    setEditExpensePaidById(payerId)
+    setEditExpensePaidByEmail(expense.paid_by_email || expense.user_email)
+    setEditExpenseSplitMode(expense.split_mode ?? 'equal')
+
+    const expSplits = splitsByExpense.get(expense.id) ?? []
+    if (expense.split_mode === 'custom' && expSplits.length > 0) {
+      setEditExpenseCustomAmts(Object.fromEntries(expSplits.map((s) => [s.debtor_user_id, String(s.amount)])))
+      setEditExpenseIncluded({})
+    } else if (expSplits.length > 0) {
+      const ids = new Set(expSplits.map((s) => s.debtor_user_id))
+      setEditExpenseIncluded(Object.fromEntries(allParticipants.map((p) => [p.user_id, ids.has(p.user_id)])))
+      setEditExpenseCustomAmts({})
+    } else {
+      setEditExpenseIncluded({})
+      setEditExpenseCustomAmts({})
+    }
+  }
+
+  const handleSaveExpense = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingExpense) return
+    const amt = parseFloat(editExpenseAmount)
+    if (!amt || amt <= 0) return
+
+    if (editExpenseSplitMode === 'custom') {
+      const total = allParticipants.reduce((s, p) => s + (parseFloat(editExpenseCustomAmts[p.user_id] || '0') || 0), 0)
+      if (Math.abs(total - amt) > 0.01) {
+        toast.error(`Custom split total (${formatCurrency(total)}) must equal expense amount (${formatCurrency(amt)})`)
+        return
+      }
+    }
+
+    setIsSaving(true)
+    try {
+      const computedSplits = computeSplits(editExpenseSplitMode, allParticipants, editExpenseIncluded, editExpenseCustomAmts, amt)
+      const newSplits = await updateSharedExpense(
+        editingExpense.id, editExpenseCategory, amt, editExpenseNote,
+        editExpensePaidById, editExpensePaidByEmail, editExpenseSplitMode, computedSplits,
+      )
+      setExpenses((prev) =>
+        prev.map((ex) =>
+          ex.id === editingExpense.id
+            ? { ...ex, category: editExpenseCategory, amount: amt, note: editExpenseNote,
+                paid_by_user_id: editExpensePaidById, paid_by_email: editExpensePaidByEmail,
+                split_mode: editExpenseSplitMode }
+            : ex
+        )
+      )
+      setSplits((prev) => [...prev.filter((s) => s.expense_id !== editingExpense.id), ...newSplits])
+      setEditingExpense(null)
+      toast.success('Expense updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update expense')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  // ── budget handlers ────────────────────────────────────────────
   const handleAddBudget = async (e: React.FormEvent) => {
     e.preventDefault()
     const amt = parseFloat(budgetAmount)
@@ -204,37 +537,6 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
-  const openEditExpense = (expense: SharedExpense) => {
-    setEditingExpense(expense)
-    setEditExpenseCategory(expense.category)
-    setEditExpenseAmount(String(expense.amount))
-    setEditExpenseNote(expense.note)
-  }
-
-  const handleSaveExpense = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!editingExpense) return
-    const amt = parseFloat(editExpenseAmount)
-    if (!amt || amt <= 0) return
-    setIsSaving(true)
-    try {
-      await updateSharedExpense(editingExpense.id, editExpenseCategory, amt, editExpenseNote)
-      setExpenses((prev) =>
-        prev.map((ex) =>
-          ex.id === editingExpense.id
-            ? { ...ex, category: editExpenseCategory, amount: amt, note: editExpenseNote }
-            : ex
-        )
-      )
-      setEditingExpense(null)
-      toast.success('Expense updated')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update expense')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
   const openEditBudget = (budget: SharedBudget) => {
     setEditingBudget(budget)
     setEditBudgetAmount(String(budget.amount))
@@ -248,9 +550,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     setIsSaving(true)
     try {
       await updateSharedBudget(editingBudget.id, amt)
-      setBudgets((prev) =>
-        prev.map((b) => (b.id === editingBudget.id ? { ...b, amount: amt } : b))
-      )
+      setBudgets((prev) => prev.map((b) => (b.id === editingBudget.id ? { ...b, amount: amt } : b)))
       setEditingBudget(null)
       toast.success('Budget updated')
     } catch (err) {
@@ -260,7 +560,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
-  // ── Member handlers ─────────────────────────────────────────
+  // ── member handlers ────────────────────────────────────────────
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!inviteEmail.trim()) return
@@ -290,19 +590,11 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
-  const handleUpdatePermissions = async (
-    memberId: string,
-    canEditBudget: boolean,
-    canInviteMembers: boolean
-  ) => {
+  const handleUpdatePermissions = async (memberId: string, canEditBudget: boolean, canInviteMembers: boolean) => {
     try {
       await updateMemberPermissions(memberId, canEditBudget, canInviteMembers)
       setMembers((prev) =>
-        prev.map((m) =>
-          m.id === memberId
-            ? { ...m, can_edit_budget: canEditBudget, can_invite_members: canInviteMembers }
-            : m
-        )
+        prev.map((m) => m.id === memberId ? { ...m, can_edit_budget: canEditBudget, can_invite_members: canInviteMembers } : m)
       )
     } catch {
       toast.error('Failed to update permissions')
@@ -329,7 +621,6 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
-  // ── Permission request handlers ─────────────────────────────
   const handleApproveRequest = async (requestId: string) => {
     try {
       await approvePermissionRequest(requestId)
@@ -371,15 +662,20 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
-  // ── Add Expense form ─────────────────────────────────────────
+  // ── add expense form ───────────────────────────────────────────
+  const addExpenseAmt = parseFloat(expenseAmount) || 0
+
+  const isAddCustomValid = expenseSplitMode !== 'custom' || (() => {
+    const t = allParticipants.reduce((s, p) => s + (parseFloat(expenseCustomAmts[p.user_id] || '0') || 0), 0)
+    return Math.abs(t - addExpenseAmt) <= 0.01
+  })()
+
   const expenseForm = (
     <form onSubmit={handleAddExpense} className="space-y-4">
       <div className="space-y-2">
         <Label className="text-sm font-semibold">Category</Label>
         <Select value={expenseCategory} onValueChange={(v: string | null) => v && setExpenseCategory(v)}>
-          <SelectTrigger className="h-11 rounded-xl">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
           <SelectContent>
             {DEFAULT_CATEGORIES.map((cat) => (
               <SelectItem key={cat.name} value={cat.name}>{cat.icon} {cat.name}</SelectItem>
@@ -392,14 +688,9 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         <div className="relative">
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
           <Input
-            type="number"
-            inputMode="decimal"
-            min="1"
-            placeholder="0"
-            value={expenseAmount}
-            onChange={(e) => setExpenseAmount(e.target.value)}
-            className="pl-8 h-12 text-lg font-semibold rounded-xl"
-            required
+            type="number" inputMode="decimal" min="1" placeholder="0"
+            value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)}
+            className="pl-8 h-12 text-lg font-semibold rounded-xl" required
           />
         </div>
       </div>
@@ -407,21 +698,51 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         <Label className="text-sm font-semibold">Note</Label>
         <Input
           placeholder="What's this for?"
-          value={expenseNote}
-          onChange={(e) => setExpenseNote(e.target.value)}
+          value={expenseNote} onChange={(e) => setExpenseNote(e.target.value)}
           className="h-11 rounded-xl"
         />
       </div>
-      <div className="flex gap-3">
+
+      {allParticipants.length > 0 && (
+        <>
+          <PaidBySelector
+            participants={allParticipants}
+            currentUserId={currentUserId}
+            value={expensePaidById}
+            onChange={setExpensePaidById}
+            onEmailChange={setExpensePaidByEmail}
+          />
+          <SplitSection
+            participants={allParticipants}
+            currentUserId={currentUserId}
+            mode={expenseSplitMode}
+            setMode={setExpenseSplitMode}
+            included={expenseIncluded}
+            setIncluded={setExpenseIncluded}
+            customAmts={expenseCustomAmts}
+            setCustomAmts={setExpenseCustomAmts}
+            totalAmt={addExpenseAmt}
+          />
+        </>
+      )}
+
+      <div className="flex gap-3 pt-1">
         <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
-          onClick={() => setShowAddExpense(false)}>Cancel</Button>
-        <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>
-          {isSaving ? 'Adding...' : 'Add Expense'}
+          onClick={() => { setShowAddExpense(false); resetAddForm() }}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          className="flex-1 h-11 rounded-xl font-semibold"
+          disabled={isSaving || !isAddCustomValid}
+        >
+          {isSaving ? 'Adding…' : 'Add Expense'}
         </Button>
       </div>
     </form>
   )
 
+  // ── loading skeleton ───────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="p-4 lg:p-6 space-y-4">
@@ -437,6 +758,12 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   }
 
   if (!group) return null
+
+  const editExpenseAmt    = parseFloat(editExpenseAmount) || 0
+  const isEditCustomValid = editExpenseSplitMode !== 'custom' || (() => {
+    const t = allParticipants.reduce((s, p) => s + (parseFloat(editExpenseCustomAmts[p.user_id] || '0') || 0), 0)
+    return Math.abs(t - editExpenseAmt) <= 0.01
+  })()
 
   return (
     <div className="p-4 lg:p-6 pb-24 lg:pb-6 space-y-5">
@@ -494,7 +821,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: 'Total Budget', value: formatCurrency(totalBudget), color: 'text-foreground' },
-          { label: 'Total Spent', value: formatCurrency(totalSpent), color: 'text-rose-600 dark:text-rose-400' },
+          { label: 'Total Spent',  value: formatCurrency(totalSpent),  color: 'text-rose-600 dark:text-rose-400' },
           {
             label: 'Remaining',
             value: formatCurrency(Math.abs(totalRemaining)),
@@ -512,9 +839,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       <div className="flex gap-1 p-1 rounded-xl bg-muted">
         {(['overview', 'chat'] as const).map((tab) => (
           <button
-            key={tab}
-            type="button"
-            onClick={() => setActiveTab(tab)}
+            key={tab} type="button" onClick={() => setActiveTab(tab)}
             className={cn(
               'flex-1 h-8 rounded-lg text-sm font-medium transition-colors capitalize',
               activeTab === tab
@@ -532,119 +857,113 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       )}
 
       {activeTab === 'overview' && (
-      <>
+        <>
+          <MembersSection
+            ownerEmail={ownerEmail}
+            members={members}
+            requests={requests}
+            currentUserId={currentUserId}
+            currentUserEmail={currentUserEmail}
+            myPerms={myPerms}
+            isOwner={isOwner}
+            onInvite={() => setShowInvite(true)}
+            onUpdatePermissions={handleUpdatePermissions}
+            onRemoveMember={handleRemoveMember}
+            onApproveRequest={handleApproveRequest}
+            onRejectRequest={handleRejectRequest}
+            onCreateRequest={handleCreateRequest}
+          />
 
-      {/* ── Members & Roles ── */}
-      <MembersSection
-        ownerEmail={ownerEmail}
-        members={members}
-        requests={requests}
-        currentUserId={currentUserId}
-        currentUserEmail={currentUserEmail}
-        myPerms={myPerms}
-        isOwner={isOwner}
-        onInvite={() => setShowInvite(true)}
-        onUpdatePermissions={handleUpdatePermissions}
-        onRemoveMember={handleRemoveMember}
-        onApproveRequest={handleApproveRequest}
-        onRejectRequest={handleRejectRequest}
-        onCreateRequest={handleCreateRequest}
-      />
+          {/* ── Category Budgets ── */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm">Category Budgets</h2>
+              {myPerms.canEditBudget && (
+                <Button
+                  type="button" size="sm" variant="outline"
+                  className="h-8 rounded-xl text-xs gap-1.5"
+                  onClick={() => setShowAddBudget(true)}
+                  disabled={availableBudgetCategories.length === 0}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add
+                </Button>
+              )}
+            </div>
 
-      {/* ── Category Budgets ── */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-sm">Category Budgets</h2>
-          {myPerms.canEditBudget && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 rounded-xl text-xs gap-1.5"
-              onClick={() => setShowAddBudget(true)}
-              disabled={availableBudgetCategories.length === 0}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add
-            </Button>
-          )}
-        </div>
-
-        {budgets.length === 0 ? (
-          <div className="text-center py-10 rounded-2xl border border-dashed border-border">
-            <Target className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">
-              {myPerms.canEditBudget
-                ? 'No budgets yet — add one to start tracking.'
-                : 'No budgets set yet.'}
-            </p>
+            {budgets.length === 0 ? (
+              <div className="text-center py-10 rounded-2xl border border-dashed border-border">
+                <Target className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">
+                  {myPerms.canEditBudget ? 'No budgets yet — add one to start tracking.' : 'No budgets set yet.'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {budgets.map((budget) => (
+                  <SharedBudgetProgress
+                    key={budget.id} budget={budget} expenses={expenses}
+                    canDelete={myPerms.canEditBudget}
+                    onEdit={openEditBudget} onDelete={handleDeleteBudget}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="space-y-2">
-            {budgets.map((budget) => (
-              <SharedBudgetProgress
-                key={budget.id}
-                budget={budget}
-                expenses={expenses}
-                canDelete={myPerms.canEditBudget}
-                onEdit={openEditBudget}
-                onDelete={handleDeleteBudget}
-              />
-            ))}
+
+          {/* ── Shared Expenses ── */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm">Expenses</h2>
+              <p className="text-xs text-muted-foreground">{expenses.length} total</p>
+            </div>
+
+            {expenses.length === 0 ? (
+              <div className="text-center py-10 rounded-2xl border border-dashed border-border">
+                <Users className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">No shared expenses yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {expenses.map((exp) => (
+                  <SharedExpenseItem
+                    key={exp.id}
+                    expense={exp}
+                    splits={splitsByExpense.get(exp.id) ?? []}
+                    currentUserId={currentUserId}
+                    isOwner={isOwner}
+                    canEditBudget={myPerms.canEditBudget}
+                    onEdit={openEditExpense}
+                    onDelete={handleDeleteExpense}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {/* ── Shared Expenses ── */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-sm">Expenses</h2>
-          <p className="text-xs text-muted-foreground">{expenses.length} total</p>
-        </div>
+          {/* ── Balances ── */}
+          <BalanceSummary balances={netBalances} currentUserId={currentUserId} />
 
-        {expenses.length === 0 ? (
-          <div className="text-center py-10 rounded-2xl border border-dashed border-border">
-            <Users className="w-7 h-7 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No shared expenses yet.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {expenses.map((exp) => (
-              <SharedExpenseItem
-                key={exp.id}
-                expense={exp}
-                currentUserId={currentUserId}
-                isOwner={isOwner}
-                canEditBudget={myPerms.canEditBudget}
-                onEdit={openEditExpense}
-                onDelete={handleDeleteExpense}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Add Expense FAB ── */}
-      <Button
-        type="button"
-        onClick={() => setShowAddExpense(true)}
-        size="lg"
-        className="fixed bottom-24 right-4 lg:bottom-8 lg:right-8 z-50 h-14 w-14 rounded-full shadow-lg shadow-primary/30 hover:shadow-primary/50 transition-all duration-300 hover:scale-110 p-0"
-      >
-        <Plus className="h-6 w-6" />
-        <span className="sr-only">Add shared expense</span>
-      </Button>
-
-      </> /* end overview tab */
+          {/* ── Add Expense FAB ── */}
+          <Button
+            type="button"
+            onClick={() => setShowAddExpense(true)}
+            size="lg"
+            className="fixed bottom-24 right-4 lg:bottom-8 lg:right-8 z-50 h-14 w-14 rounded-full shadow-lg shadow-primary/30 hover:shadow-primary/50 transition-all duration-300 hover:scale-110 p-0"
+          >
+            <Plus className="h-6 w-6" />
+            <span className="sr-only">Add shared expense</span>
+          </Button>
+        </>
       )}
 
       {/* ── Add Expense — mobile sheet / desktop dialog ── */}
       {isMobile ? (
-        <BottomSheet open={showAddExpense} onClose={() => setShowAddExpense(false)} title="Add Expense">
+        <BottomSheet open={showAddExpense} onClose={() => { setShowAddExpense(false); resetAddForm() }} title="Add Expense">
           {expenseForm}
         </BottomSheet>
       ) : (
-        <Dialog open={showAddExpense} onOpenChange={setShowAddExpense}>
+        <Dialog open={showAddExpense} onOpenChange={(o) => { if (!o) resetAddForm(); setShowAddExpense(o) }}>
           <DialogContent className="sm:max-w-sm rounded-2xl">
             <DialogHeader>
               <DialogTitle className="text-xl font-bold">Add Expense</DialogTitle>
@@ -663,10 +982,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
           <form onSubmit={handleAddBudget} className="space-y-4">
             <div className="space-y-2">
               <Label className="text-sm font-semibold">Category</Label>
-              <Select
-                value={budgetCategory}
-                onValueChange={(v: string | null) => v && setBudgetCategory(v)}
-              >
+              <Select value={budgetCategory} onValueChange={(v: string | null) => v && setBudgetCategory(v)}>
                 <SelectTrigger className="h-11 rounded-xl">
                   <SelectValue placeholder="Pick a category" />
                 </SelectTrigger>
@@ -682,23 +998,15 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
                 <Input
-                  type="number"
-                  inputMode="decimal"
-                  min="1"
-                  placeholder="0"
-                  value={budgetAmount}
-                  onChange={(e) => setBudgetAmount(e.target.value)}
-                  className="pl-8 h-12 text-lg font-semibold rounded-xl"
-                  required
+                  type="number" inputMode="decimal" min="1" placeholder="0"
+                  value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)}
+                  className="pl-8 h-12 text-lg font-semibold rounded-xl" required
                 />
               </div>
             </div>
             <div className="flex gap-3">
-              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
-                onClick={() => setShowAddBudget(false)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>
-                {isSaving ? 'Saving...' : 'Set Budget'}
-              </Button>
+              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setShowAddBudget(false)}>Cancel</Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>{isSaving ? 'Saving…' : 'Set Budget'}</Button>
             </div>
           </form>
         </DialogContent>
@@ -714,9 +1022,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
             <div className="space-y-2">
               <Label className="text-sm font-semibold">Category</Label>
               <Select value={editExpenseCategory} onValueChange={(v: string | null) => v && setEditExpenseCategory(v)}>
-                <SelectTrigger className="h-11 rounded-xl">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {DEFAULT_CATEGORIES.map((cat) => (
                     <SelectItem key={cat.name} value={cat.name}>{cat.icon} {cat.name}</SelectItem>
@@ -729,14 +1035,9 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
                 <Input
-                  type="number"
-                  inputMode="decimal"
-                  min="1"
-                  placeholder="0"
-                  value={editExpenseAmount}
-                  onChange={(e) => setEditExpenseAmount(e.target.value)}
-                  className="pl-8 h-12 text-lg font-semibold rounded-xl"
-                  required
+                  type="number" inputMode="decimal" min="1" placeholder="0"
+                  value={editExpenseAmount} onChange={(e) => setEditExpenseAmount(e.target.value)}
+                  className="pl-8 h-12 text-lg font-semibold rounded-xl" required
                 />
               </div>
             </div>
@@ -744,16 +1045,38 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               <Label className="text-sm font-semibold">Note</Label>
               <Input
                 placeholder="What's this for?"
-                value={editExpenseNote}
-                onChange={(e) => setEditExpenseNote(e.target.value)}
+                value={editExpenseNote} onChange={(e) => setEditExpenseNote(e.target.value)}
                 className="h-11 rounded-xl"
               />
             </div>
-            <div className="flex gap-3">
-              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
-                onClick={() => setEditingExpense(null)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>
-                {isSaving ? 'Saving...' : 'Save Changes'}
+
+            {allParticipants.length > 0 && (
+              <>
+                <PaidBySelector
+                  participants={allParticipants}
+                  currentUserId={currentUserId}
+                  value={editExpensePaidById}
+                  onChange={setEditExpensePaidById}
+                  onEmailChange={setEditExpensePaidByEmail}
+                />
+                <SplitSection
+                  participants={allParticipants}
+                  currentUserId={currentUserId}
+                  mode={editExpenseSplitMode}
+                  setMode={setEditExpenseSplitMode}
+                  included={editExpenseIncluded}
+                  setIncluded={setEditExpenseIncluded}
+                  customAmts={editExpenseCustomAmts}
+                  setCustomAmts={setEditExpenseCustomAmts}
+                  totalAmt={editExpenseAmt}
+                />
+              </>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setEditingExpense(null)}>Cancel</Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving || !isEditCustomValid}>
+                {isSaving ? 'Saving…' : 'Save Changes'}
               </Button>
             </div>
           </form>
@@ -764,9 +1087,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       <Dialog open={!!editingBudget} onOpenChange={(o) => !o && setEditingBudget(null)}>
         <DialogContent className="sm:max-w-sm rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="text-xl font-bold">
-              Edit Budget — {editingBudget?.category}
-            </DialogTitle>
+            <DialogTitle className="text-xl font-bold">Edit Budget — {editingBudget?.category}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSaveBudget} className="space-y-4">
             <div className="space-y-2">
@@ -774,23 +1095,15 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
                 <Input
-                  type="number"
-                  inputMode="decimal"
-                  min="1"
-                  placeholder="0"
-                  value={editBudgetAmount}
-                  onChange={(e) => setEditBudgetAmount(e.target.value)}
-                  className="pl-8 h-12 text-lg font-semibold rounded-xl"
-                  required
+                  type="number" inputMode="decimal" min="1" placeholder="0"
+                  value={editBudgetAmount} onChange={(e) => setEditBudgetAmount(e.target.value)}
+                  className="pl-8 h-12 text-lg font-semibold rounded-xl" required
                 />
               </div>
             </div>
             <div className="flex gap-3">
-              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
-                onClick={() => setEditingBudget(null)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>
-                {isSaving ? 'Saving...' : 'Save Changes'}
-              </Button>
+              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setEditingBudget(null)}>Cancel</Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save Changes'}</Button>
             </div>
           </form>
         </DialogContent>
@@ -806,16 +1119,11 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
             <div className="space-y-2">
               <Label className="text-sm font-semibold">Email address</Label>
               <Input
-                type="email"
-                placeholder="friend@example.com"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                className="h-11 rounded-xl"
-                required
+                type="email" placeholder="friend@example.com"
+                value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
+                className="h-11 rounded-xl" required
               />
-              <p className="text-xs text-muted-foreground">
-                The person must already have a Budget Journal account.
-              </p>
+              <p className="text-xs text-muted-foreground">The person must already have a Budget Journal account.</p>
             </div>
             {isOwner && (
               <div className="space-y-2">
@@ -826,9 +1134,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                     onClick={() => setInviteCanEdit((v) => !v)}
                     className={cn(
                       'flex-1 h-10 rounded-xl text-sm font-medium border transition-colors',
-                      inviteCanEdit
-                        ? 'bg-blue-500 text-white border-blue-500'
-                        : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
+                      inviteCanEdit ? 'bg-blue-500 text-white border-blue-500' : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
                     )}
                   >
                     Edit Budget
@@ -838,25 +1144,18 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                     onClick={() => setInviteCanInvite((v) => !v)}
                     className={cn(
                       'flex-1 h-10 rounded-xl text-sm font-medium border transition-colors',
-                      inviteCanInvite
-                        ? 'bg-violet-500 text-white border-violet-500'
-                        : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
+                      inviteCanInvite ? 'bg-violet-500 text-white border-violet-500' : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
                     )}
                   >
                     Invite Members
                   </button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Toggle permissions to grant on invite. Members can always add expenses.
-                </p>
+                <p className="text-xs text-muted-foreground">Members can always add expenses.</p>
               </div>
             )}
             <div className="flex gap-3">
-              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl"
-                onClick={() => setShowInvite(false)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>
-                {isSaving ? 'Inviting...' : 'Add Member'}
-              </Button>
+              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setShowInvite(false)}>Cancel</Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>{isSaving ? 'Inviting…' : 'Add Member'}</Button>
             </div>
           </form>
         </DialogContent>
