@@ -5,13 +5,22 @@ import { IncomeSource, IncomeSourceFormData } from '@/types'
 import { getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource } from '@/services/incomeSources'
 import { toast } from 'sonner'
 
+function dedupe(sources: IncomeSource[]): IncomeSource[] {
+  const seen = new Set<string>()
+  return sources.filter((s) => {
+    if (seen.has(s.id)) return false
+    seen.add(s.id)
+    return true
+  })
+}
+
 export function useIncomeSources() {
   const [sources, setSources] = useState<IncomeSource[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   const load = useCallback(async () => {
     try {
-      setSources(await getIncomeSources())
+      setSources(dedupe(await getIncomeSources()))
     } catch {
       toast.error('Failed to load income sources')
     } finally {
@@ -24,7 +33,7 @@ export function useIncomeSources() {
   const addSource = async (form: IncomeSourceFormData): Promise<IncomeSource | null> => {
     try {
       const source = await createIncomeSource(form)
-      setSources((prev) => [...prev, source])
+      setSources((prev) => prev.some((s) => s.id === source.id) ? prev : [...prev, source])
       toast.success('Income source added')
       return source
     } catch {

@@ -40,6 +40,12 @@ CREATE POLICY "is_delete" ON income_sources
   FOR DELETE TO authenticated
   USING (user_id = (select auth.uid()) AND is_default = false);
 
+-- Unique index so re-running this migration never duplicates defaults.
+-- (id is gen_random_uuid() — ON CONFLICT (id) would never fire.)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_income_sources_global_name
+  ON income_sources(lower(name))
+  WHERE user_id IS NULL;
+
 -- Seed default sources (safe to re-run)
 INSERT INTO income_sources (user_id, name, emoji, color, is_default)
 VALUES
@@ -48,7 +54,7 @@ VALUES
   (NULL, 'Bonus',       '🎁', '#F59E0B', true),
   (NULL, 'Investments', '📈', '#10B981', true),
   (NULL, 'Business',    '🏢', '#EF4444', true)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (lower(name)) WHERE user_id IS NULL DO NOTHING;
 
 -- ── 2. income_entries ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS income_entries (
