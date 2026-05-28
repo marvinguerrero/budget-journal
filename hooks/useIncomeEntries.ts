@@ -56,5 +56,15 @@ export function useIncomeEntries(month?: number, year?: number) {
     }
   }
 
-  return { entries, isLoading, addEntry, editEntry, removeEntry }
+  const markReceived = async (id: string): Promise<void> => {
+    try {
+      const updated = await updateIncomeEntry(id, { status: 'received' })
+      setEntries((prev) => prev.map((e) => (e.id === id ? updated : e)))
+      toast.success('Marked as received!')
+    } catch {
+      toast.error('Failed to mark as received')
+    }
+  }
+
+  return { entries, isLoading, addEntry, editEntry, removeEntry, markReceived }
 }

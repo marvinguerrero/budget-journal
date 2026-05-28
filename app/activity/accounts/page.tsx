@@ -507,7 +507,7 @@ function AccountCard({ acc }: { acc: FinancialAccount }) {
   const isLiab = isLiabilityType(acc.type)
   const typeInfo = ACCOUNT_TYPES.find((t) => t.value === acc.type)
   return (
-    <div className="flex items-center gap-3 p-4 rounded-2xl border border-border bg-card">
+    <Link href={`/activity/accounts/${acc.id}`} className="flex items-center gap-3 p-4 rounded-2xl border border-border bg-card hover:bg-accent/30 active:scale-[0.99] transition-all">
       <div className="w-10 h-10 rounded-xl bg-accent/60 flex items-center justify-center text-lg flex-shrink-0">
         {acc.emoji}
       </div>
@@ -536,6 +536,6 @@ function AccountCard({ acc }: { acc: FinancialAccount }) {
           </p>
         </div>
       </div>
-    </div>
+    </Link>
   )
 }

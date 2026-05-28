@@ -67,9 +67,6 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
             <span className="text-xs text-muted-foreground">
               {formatShortDate(expense.created_at)}
             </span>
-            {expense.payment_method && (
-              <span className="text-xs text-muted-foreground">· {expense.payment_method}</span>
-            )}
             {account && (
               <span className="text-xs text-muted-foreground">· {account.emoji} {account.name}</span>
             )}
@@ -109,7 +106,6 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
               amount: expense.amount,
               category: expense.category,
               note: expense.note,
-              payment_method: expense.payment_method,
               account_id: expense.account_id,
               created_at: expense.created_at,
             }}
@@ -129,7 +125,7 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
                 amount: expense.amount,
                 category: expense.category,
                 note: expense.note,
-                payment_method: expense.payment_method,
+                account_id: expense.account_id,
                 created_at: expense.created_at,
               }}
               isEditing

@@ -76,7 +76,8 @@ export function useAccountActivity(month?: number, year?: number) {
           supabase
             .from('income_entries')
             .select('*, income_sources(name, emoji)')
-            .not('account_id', 'is', null),
+            .not('account_id', 'is', null)
+            .eq('status', 'received'),
           'received_at',
         ),
         withDates(

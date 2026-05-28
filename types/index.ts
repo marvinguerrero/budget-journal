@@ -73,6 +73,8 @@ export interface FinancialAccountFormData {
   balance: number
 }
 
+export type IncomeStatus = 'expected' | 'received'
+
 export interface IncomeEntry {
   id: string
   user_id: string
@@ -80,6 +82,7 @@ export interface IncomeEntry {
   account_id: string | null
   amount: number
   note: string
+  status: IncomeStatus
   received_at: string
   created_at: string
 }
@@ -95,6 +98,7 @@ export interface IncomeEntryFormData {
   account_id?: string | null
   amount: number
   note: string
+  status?: IncomeStatus
   received_at: string
 }
 
@@ -135,7 +139,6 @@ export interface Expense {
   amount: number
   category: string
   note: string
-  payment_method?: string
   account_id?: string | null
   created_at: string
 }
@@ -160,20 +163,10 @@ export interface Category {
   created_at: string
 }
 
-export interface PaymentMethod {
-  id: string
-  user_id: string | null
-  name: string
-  emoji: string
-  is_default: boolean
-  created_at: string
-}
-
 export interface ExpenseFormData {
   amount: number
   category: string
   note: string
-  payment_method?: string
   account_id?: string | null
   created_at?: string
 }
@@ -189,11 +182,6 @@ export interface CategoryFormData {
   name: string
   icon: string
   color: string
-}
-
-export interface PaymentMethodFormData {
-  name: string
-  emoji: string
 }
 
 export interface AccountTransfer {

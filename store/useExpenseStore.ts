@@ -1,13 +1,12 @@
 'use client'
 
 import { create } from 'zustand'
-import { Expense, Budget, Category, PaymentMethod } from '@/types'
+import { Expense, Budget, Category } from '@/types'
 
 interface ExpenseStore {
   expenses: Expense[]
   budgets: Budget[]
   categories: Category[]
-  paymentMethods: PaymentMethod[]
   isLoading: boolean
 
   setExpenses: (expenses: Expense[]) => void
@@ -25,11 +24,6 @@ interface ExpenseStore {
   updateCategory: (id: string, category: Partial<Category>) => void
   removeCategory: (id: string) => void
 
-  setPaymentMethods: (paymentMethods: PaymentMethod[]) => void
-  addPaymentMethod: (pm: PaymentMethod) => void
-  updatePaymentMethod: (id: string, pm: Partial<PaymentMethod>) => void
-  removePaymentMethod: (id: string) => void
-
   setLoading: (loading: boolean) => void
 }
 
@@ -37,7 +31,6 @@ export const useExpenseStore = create<ExpenseStore>((set) => ({
   expenses: [],
   budgets: [],
   categories: [],
-  paymentMethods: [],
   isLoading: false,
 
   setExpenses: (expenses) => set({ expenses }),
@@ -57,15 +50,6 @@ export const useExpenseStore = create<ExpenseStore>((set) => ({
   updateCategory: (id, updated) =>
     set((s) => ({ categories: s.categories.map((c) => (c.id === id ? { ...c, ...updated } : c)) })),
   removeCategory: (id) => set((s) => ({ categories: s.categories.filter((c) => c.id !== id) })),
-
-  setPaymentMethods: (paymentMethods) => set({ paymentMethods }),
-  addPaymentMethod: (pm) => set((s) => ({ paymentMethods: [...s.paymentMethods, pm] })),
-  updatePaymentMethod: (id, updated) =>
-    set((s) => ({
-      paymentMethods: s.paymentMethods.map((p) => (p.id === id ? { ...p, ...updated } : p)),
-    })),
-  removePaymentMethod: (id) =>
-    set((s) => ({ paymentMethods: s.paymentMethods.filter((p) => p.id !== id) })),
 
   setLoading: (isLoading) => set({ isLoading }),
 }))

@@ -25,6 +25,18 @@ export async function createIncomeSource(form: IncomeSourceFormData): Promise<In
   return data
 }
 
+export async function updateIncomeSource(id: string, form: Partial<IncomeSourceFormData>): Promise<IncomeSource> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('income_sources')
+    .update(form)
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
 export async function deleteIncomeSource(id: string): Promise<void> {
   const supabase = createClient()
   const { error } = await supabase.from('income_sources').delete().eq('id', id)

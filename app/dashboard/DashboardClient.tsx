@@ -178,9 +178,10 @@ export function DashboardClient({
 
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
             {accounts.map((acc) => (
-              <div
+              <a
                 key={acc.id}
-                className="flex items-center gap-2.5 p-2.5 rounded-xl bg-accent/40 border border-border/50"
+                href={`/activity/accounts/${acc.id}`}
+                className="flex items-center gap-2.5 p-2.5 rounded-xl bg-accent/40 border border-border/50 hover:bg-accent/70 active:scale-[0.98] transition-all"
               >
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0 bg-accent/60">
                   {acc.emoji}
@@ -192,7 +193,7 @@ export function DashboardClient({
                     {formatCurrency(acc.balance)}
                   </p>
                 </div>
-              </div>
+              </a>
             ))}
           </div>
           <a href="/activity/accounts" className="block text-center text-xs text-primary font-medium hover:underline pt-0.5">

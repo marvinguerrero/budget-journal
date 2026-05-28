@@ -25,7 +25,7 @@ export async function createIncomeEntry(form: IncomeEntryFormData): Promise<Inco
   if (!user) throw new Error('Not authenticated')
   const { data, error } = await supabase
     .from('income_entries')
-    .insert({ user_id: user.id, ...form })
+    .insert({ user_id: user.id, status: 'expected', ...form })
     .select()
     .single()
   if (error) throw error

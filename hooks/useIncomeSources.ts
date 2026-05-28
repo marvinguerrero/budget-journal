@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { IncomeSource, IncomeSourceFormData } from '@/types'
-import { getIncomeSources, createIncomeSource, deleteIncomeSource } from '@/services/incomeSources'
+import { getIncomeSources, createIncomeSource, updateIncomeSource, deleteIncomeSource } from '@/services/incomeSources'
 import { toast } from 'sonner'
 
 export function useIncomeSources() {
@@ -33,6 +33,18 @@ export function useIncomeSources() {
     }
   }
 
+  const editSource = async (id: string, form: Partial<IncomeSourceFormData>): Promise<IncomeSource | null> => {
+    try {
+      const updated = await updateIncomeSource(id, form)
+      setSources((prev) => prev.map((s) => (s.id === id ? updated : s)))
+      toast.success('Income source updated')
+      return updated
+    } catch {
+      toast.error('Failed to update income source')
+      return null
+    }
+  }
+
   const removeSource = async (id: string) => {
     try {
       await deleteIncomeSource(id)
@@ -43,5 +55,5 @@ export function useIncomeSources() {
     }
   }
 
-  return { sources, isLoading, addSource, removeSource }
+  return { sources, isLoading, addSource, editSource, removeSource }
 }

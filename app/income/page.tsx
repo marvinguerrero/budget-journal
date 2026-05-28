@@ -40,8 +40,10 @@ export default function IncomePage() {
   const [showAddSource, setShowAddSource] = useState(false)
   const isMobile = useIsMobile()
 
+  const [statusFilter, setStatusFilter] = useState<'all' | 'expected' | 'received'>('all')
+
   const { sources, addSource, removeSource } = useIncomeSources()
-  const { entries, isLoading, addEntry, editEntry, removeEntry } = useIncomeEntries(
+  const { entries, isLoading, addEntry, editEntry, removeEntry, markReceived } = useIncomeEntries(
     month === 'all' ? undefined : Number(month),
     year  === 'all' ? undefined : Number(year)
   )
@@ -54,6 +56,7 @@ export default function IncomePage() {
   const [entryAmount, setEntryAmount]     = useState('')
   const [entryNote, setEntryNote]         = useState('')
   const [entryDate, setEntryDate]         = useState(now.toISOString().slice(0, 10))
+  const [entryStatus, setEntryStatus]     = useState<'expected' | 'received'>('expected')
   const [isSaving, setIsSaving]           = useState(false)
 
   // ── Add source form state ────────────────────────────────────
@@ -74,11 +77,14 @@ export default function IncomePage() {
     entries.filter((e) => {
       if (sourceFilter !== 'all' && e.income_source_id !== sourceFilter) return false
       if (day !== 'all' && new Date(e.received_at).getDate() !== Number(day)) return false
+      if (statusFilter !== 'all' && e.status !== statusFilter) return false
       return true
     }),
-    [entries, sourceFilter, day]
+    [entries, sourceFilter, day, statusFilter]
   )
-  const totalIncome = useMemo(() => filtered.reduce((s, e) => s + e.amount, 0), [filtered])
+  const totalReceived  = useMemo(() => filtered.filter((e) => e.status === 'received').reduce((s, e) => s + e.amount, 0), [filtered])
+  const totalExpected  = useMemo(() => filtered.filter((e) => e.status === 'expected').reduce((s, e) => s + e.amount, 0), [filtered])
+  const totalIncome = totalReceived + totalExpected
   const avgEntry    = filtered.length > 0 ? totalIncome / filtered.length : 0
 
   const breakdown = useMemo(() => {
@@ -101,12 +107,14 @@ export default function IncomePage() {
         account_id: entryAccountId || null,
         amount: amt,
         note: entryNote.trim(),
+        status: entryStatus,
         received_at: new Date(entryDate + 'T12:00:00').toISOString(),
       })
       setShowAdd(false)
       setEntryAmount('')
       setEntryNote('')
       setEntryAccountId('')
+      setEntryStatus('expected')
       setEntryDate(now.toISOString().slice(0, 10))
     } finally {
       setIsSaving(false)
@@ -214,6 +222,27 @@ export default function IncomePage() {
         />
       </div>
       <div className="space-y-2">
+        <Label className="text-sm font-semibold">Status</Label>
+        <div className="grid grid-cols-2 gap-2">
+          {(['expected', 'received'] as const).map((s) => (
+            <button
+              key={s} type="button"
+              onClick={() => setEntryStatus(s)}
+              className={cn(
+                'h-11 rounded-xl text-sm font-semibold border transition-colors',
+                entryStatus === s
+                  ? s === 'expected'
+                    ? 'bg-amber-500/15 border-amber-500/50 text-amber-600 dark:text-amber-400'
+                    : 'bg-emerald-500/15 border-emerald-500/50 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-muted border-border text-muted-foreground hover:bg-accent'
+              )}
+            >
+              {s === 'expected' ? '⏳ Expected' : '✓ Received'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-2">
         <Label className="text-sm font-semibold">
           Account <span className="text-muted-foreground font-normal">(optional)</span>
         </Label>
@@ -285,14 +314,44 @@ export default function IncomePage() {
             ))}
           </SelectContent>
         </Select>
+        <div className="flex gap-2">
+          {(['all', 'received', 'expected'] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatusFilter(s)}
+              className={cn(
+                'flex-1 h-9 rounded-xl text-xs font-semibold border transition-colors',
+                statusFilter === s
+                  ? s === 'expected'
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400'
+                    : s === 'received'
+                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-primary/10 border-primary/30 text-primary'
+                  : 'bg-card border-border text-muted-foreground hover:bg-accent'
+              )}
+            >
+              {s === 'all' ? 'All' : s === 'received' ? '✓ Received' : '⏳ Expected'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-center">
+          <p className="text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(totalReceived)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Received</p>
+        </div>
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3 text-center">
+          <p className="text-base font-bold tabular-nums text-amber-600 dark:text-amber-400">{formatCurrency(totalExpected)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Expected</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
         {[
-          { label: 'Total Income',   value: formatCurrency(totalIncome), color: 'text-emerald-600 dark:text-emerald-400' },
-          { label: 'Avg per Entry',  value: formatCurrency(avgEntry),    color: 'text-foreground' },
-          { label: 'Entries',        value: String(filtered.length),     color: 'text-foreground' },
+          { label: 'Avg per Entry', value: formatCurrency(avgEntry),    color: 'text-foreground' },
+          { label: 'Entries',       value: String(filtered.length),     color: 'text-foreground' },
         ].map((stat) => (
           <div key={stat.label} className="rounded-2xl border border-border bg-card p-3 text-center">
             <p className={`text-base font-bold tabular-nums ${stat.color}`}>{stat.value}</p>
@@ -356,6 +415,7 @@ export default function IncomePage() {
                 source={sourceMap.get(entry.income_source_id)}
                 onEdit={openEditEntry}
                 onDelete={removeEntry}
+                onMarkReceived={markReceived}
               />
             ))}
           </div>

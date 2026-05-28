@@ -14,10 +14,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { DEFAULT_CATEGORIES } from '@/lib/constants'
+import { DEFAULT_CATEGORIES, isLiabilityType } from '@/lib/constants'
 import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
 import { exportExpensesToExcel } from '@/utils/exportExcel'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
+import { cn } from '@/lib/utils'
 import { Search, X, Download } from 'lucide-react'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
@@ -34,38 +35,45 @@ export default function ExpensesPage() {
   const [day, setDay] = useState('all')
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
-  const [paymentFilter, setPaymentFilter] = useState('all')
+  const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | 'asset' | 'liability'>('all')
+  const [accountFilter, setAccountFilter] = useState('all')
 
   const targetMonth = month !== 'all' ? Number(month) : undefined
   const targetYear = year !== 'all' ? Number(year) : undefined
 
   const { expenses, isLoading, addExpense, updateExpense, deleteExpense } = useExpenses(targetMonth, targetYear)
   const { accounts } = useFinancialAccounts()
+  const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
+  const visibleAccounts = useMemo(() =>
+    accountTypeFilter === 'all'
+      ? accounts
+      : accounts.filter((a) => accountTypeFilter === 'liability' ? isLiabilityType(a.type) : !isLiabilityType(a.type)),
+    [accounts, accountTypeFilter]
+  )
 
   const daysInMonth = month !== 'all' && year !== 'all'
     ? getDaysInMonth(Number(month), Number(year))
     : 31
 
-  // Unique payment methods present in the loaded month's expenses
-  const availablePaymentMethods = useMemo(() => {
-    const methods = new Set(
-      expenses.map((e) => e.payment_method).filter((m): m is string => Boolean(m))
-    )
-    return Array.from(methods).sort()
-  }, [expenses])
-
   const handleMonthChange = (v: string | null) => {
     if (!v) return
     setMonth(v)
     setDay('all')
-    setPaymentFilter('all')
+    setAccountFilter('all')
+    setAccountTypeFilter('all')
   }
 
   const handleYearChange = (v: string | null) => {
     if (!v) return
     setYear(v)
     setDay('all')
-    setPaymentFilter('all')
+    setAccountFilter('all')
+    setAccountTypeFilter('all')
+  }
+
+  const handleAccountTypeFilter = (t: 'all' | 'asset' | 'liability') => {
+    setAccountTypeFilter(t)
+    setAccountFilter('all')
   }
 
   const filtered = useMemo(() => {
@@ -77,11 +85,13 @@ export default function ExpensesPage() {
         e.note.toLowerCase().includes(search.toLowerCase()) ||
         e.category.toLowerCase().includes(search.toLowerCase())
       const matchesCategory = categoryFilter === 'all' || e.category === categoryFilter
-      const matchesPayment =
-        paymentFilter === 'all' || (e.payment_method ?? '') === paymentFilter
-      return matchesDay && matchesSearch && matchesCategory && matchesPayment
+      const matchesAccount = accountFilter === 'all' || (e.account_id ?? '') === accountFilter
+      const expAccount = e.account_id ? accountMap.get(e.account_id) : null
+      const matchesType = accountTypeFilter === 'all'
+        || (accountTypeFilter === 'liability' ? (!!expAccount && isLiabilityType(expAccount.type)) : (!!expAccount && !isLiabilityType(expAccount.type)))
+      return matchesDay && matchesSearch && matchesCategory && matchesAccount && matchesType
     })
-  }, [expenses, day, search, categoryFilter, paymentFilter])
+  }, [expenses, day, search, categoryFilter, accountFilter, accountTypeFilter, accountMap])
 
   const totalFiltered = filtered.reduce((sum, e) => sum + e.amount, 0)
 
@@ -168,34 +178,63 @@ export default function ExpensesPage() {
         )}
       </div>
 
-      {/* Category + Payment method */}
-      <div className="flex gap-2">
-        <Select value={categoryFilter} onValueChange={(v: string | null) => setCategoryFilter(v || 'all')}>
-          <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
-            <SelectValue placeholder="All categories" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All categories</SelectItem>
-            {DEFAULT_CATEGORIES.map((cat) => (
-              <SelectItem key={cat.name} value={cat.name}>
-                {cat.icon} {cat.name}
-              </SelectItem>
+      {/* Category + Account */}
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <Select value={categoryFilter} onValueChange={(v: string | null) => setCategoryFilter(v || 'all')}>
+            <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
+              <SelectValue placeholder="All categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All categories</SelectItem>
+              {DEFAULT_CATEGORIES.map((cat) => (
+                <SelectItem key={cat.name} value={cat.name}>
+                  {cat.icon} {cat.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={accountFilter} onValueChange={(v: string | null) => setAccountFilter(v || 'all')}>
+            <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
+              <SelectValue placeholder="All accounts" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All accounts</SelectItem>
+              {visibleAccounts.map((acc) => (
+                <SelectItem key={acc.id} value={acc.id}>
+                  {acc.emoji} {acc.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {accounts.length > 0 && (
+          <div className="flex gap-2">
+            {([
+              { key: 'all',       label: 'All types' },
+              { key: 'asset',     label: '💰 Assets' },
+              { key: 'liability', label: '💳 Liabilities' },
+            ] as const).map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => handleAccountTypeFilter(key)}
+                className={cn(
+                  'flex-1 h-8 rounded-xl text-xs font-semibold border transition-colors',
+                  accountTypeFilter === key
+                    ? key === 'liability'
+                      ? 'bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400'
+                      : key === 'asset'
+                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-primary/10 border-primary/30 text-primary'
+                    : 'bg-card border-border text-muted-foreground hover:bg-accent'
+                )}
+              >
+                {label}
+              </button>
             ))}
-          </SelectContent>
-        </Select>
-        <Select value={paymentFilter} onValueChange={(v: string | null) => setPaymentFilter(v || 'all')}>
-          <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
-            <SelectValue placeholder="All methods" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All methods</SelectItem>
-            {availablePaymentMethods.map((method) => (
-              <SelectItem key={method} value={method}>
-                {method}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          </div>
+        )}
       </div>
 
       {isLoading ? (
@@ -205,7 +244,7 @@ export default function ExpensesPage() {
           <p className="text-4xl">💸</p>
           <p className="font-semibold">No expenses found</p>
           <p className="text-sm text-muted-foreground">
-            {search || categoryFilter !== 'all' || day !== 'all' || paymentFilter !== 'all'
+            {search || categoryFilter !== 'all' || day !== 'all' || accountFilter !== 'all' || accountTypeFilter !== 'all'
               ? 'Try adjusting your filters'
               : 'Add your first expense!'}
           </p>

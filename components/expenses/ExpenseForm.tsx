@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CategorySelector } from './CategorySelector'
-import { PaymentMethodSelector } from './PaymentMethodSelector'
 import { AccountSelector } from '@/components/accounts/AccountSelector'
 import { ExpenseFormData } from '@/types'
 import { format } from 'date-fns'
@@ -21,8 +20,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   const [amount, setAmount] = useState(initialData?.amount?.toString() || '')
   const [category, setCategory] = useState(initialData?.category || 'Food')
   const [note, setNote] = useState(initialData?.note || '')
-  const [paymentMethod, setPaymentMethod] = useState(initialData?.payment_method || '')
-  const [accountId, setAccountId] = useState(initialData?.account_id || '')
+  const [accountId, setAccountId] = useState(initialData?.account_id ?? '')
   const [date, setDate] = useState(
     initialData?.created_at
       ? format(new Date(initialData.created_at), 'yyyy-MM-dd')
@@ -30,7 +28,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   )
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!amount || parseFloat(amount) <= 0) return
 
@@ -40,7 +38,6 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
         amount: parseFloat(amount),
         category,
         note: note.trim() || category,
-        payment_method: paymentMethod || undefined,
         account_id: accountId || null,
         created_at: new Date(date + 'T' + new Date().toTimeString().slice(0, 8)).toISOString(),
       })
@@ -95,14 +92,6 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
           onChange={(e) => setDate(e.target.value)}
           className="h-11 rounded-xl"
         />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-sm font-semibold">
-          Payment Method{' '}
-          <span className="text-muted-foreground font-normal">(optional)</span>
-        </Label>
-        <PaymentMethodSelector value={paymentMethod} onChange={setPaymentMethod} />
       </div>
 
       <div className="space-y-2">
