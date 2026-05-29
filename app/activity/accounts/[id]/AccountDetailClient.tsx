@@ -24,7 +24,7 @@ export function AccountDetailClient({ accountId }: Props) {
   const filtered = useMemo(() =>
     kindFilter === 'all' ? entries :
     entries.filter((e) =>
-      kindFilter === 'expenses'  ? e.kind === 'expense' :
+      kindFilter === 'expenses'  ? (e.kind === 'expense' || e.kind === 'shared_expense') :
       kindFilter === 'income'    ? e.kind === 'income' :
       e.kind === 'transfer'
     ),
@@ -209,6 +209,46 @@ function AccountDetailEntryItem({ entry, isLiab }: { entry: AccountDetailEntry; 
               {icon} {entry.category}
             </span>
           </p>
+        </div>
+        <p className={cn('text-sm font-bold tabular-nums flex-shrink-0', isLiab ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400')}>
+          {isLiab ? `+${formatCurrency(entry.amount)} debt` : `-${formatCurrency(entry.amount)}`}
+        </p>
+      </div>
+    )
+  }
+
+  if (entry.kind === 'shared_expense') {
+    const icon  = CATEGORY_ICONS[entry.category] ?? '📦'
+    const color = CATEGORY_COLORS[entry.category] ?? '#6B7280'
+    return (
+      <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-card border border-border">
+        <div
+          className={cn(
+            'w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0',
+            isLiab ? 'bg-amber-500/10' : 'bg-rose-500/10'
+          )}
+        >
+          {isLiab
+            ? <CreditCard className="w-4 h-4 text-amber-500" />
+            : <span style={{ fontSize: 16, lineHeight: 1 }}>{icon}</span>
+          }
+        </div>
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <div className="flex items-center gap-1.5">
+            <span className={cn('text-[10px] font-semibold uppercase tracking-wide', isLiab ? 'text-amber-500' : 'text-rose-500')}>
+              {isLiab ? 'Shared Charge' : 'Shared Expense'}
+            </span>
+            <span className="text-[10px] text-muted-foreground">· {date}</span>
+          </div>
+          <p className="text-sm font-semibold truncate">{entry.note || entry.category}</p>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px]" style={{ backgroundColor: color + '20', borderRadius: 4, padding: '1px 5px' }}>
+              {icon} {entry.category}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {entry.groupEmoji} {entry.groupName}
+            </span>
+          </div>
         </div>
         <p className={cn('text-sm font-bold tabular-nums flex-shrink-0', isLiab ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400')}>
           {isLiab ? `+${formatCurrency(entry.amount)} debt` : `-${formatCurrency(entry.amount)}`}

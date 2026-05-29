@@ -87,3 +87,11 @@ export async function rejectSettlement(settlementId: string): Promise<void> {
   })
   if (error) throw new Error(error.message)
 }
+
+export async function recallSettlement(settlementId: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.rpc('recall_settlement', {
+    p_settlement_id: settlementId,
+  })
+  if (error) throw new Error(error.message)
+}

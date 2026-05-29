@@ -15,6 +15,16 @@ export type AccountDetailEntry =
       note: string
     }
   | {
+      kind: 'shared_expense'
+      id: string
+      date: string
+      amount: number
+      category: string
+      note: string
+      groupName: string
+      groupEmoji: string
+    }
+  | {
       kind: 'income'
       id: string
       date: string
@@ -45,16 +55,21 @@ export function useAccountDetail(accountId: string) {
       const supabase = createClient()
 
       const [
-        { data: acc,           error: accErr },
+        { data: acc,            error: accErr },
         { data: allAccounts },
-        { data: expenses,      error: expErr },
-        { data: incomes,       error: incErr },
-        { data: transfersOut,  error: tfoErr },
-        { data: transfersIn,   error: tfiErr },
+        { data: expenses,       error: expErr },
+        { data: sharedExpenses, error: seErr },
+        { data: incomes,        error: incErr },
+        { data: transfersOut,   error: tfoErr },
+        { data: transfersIn,    error: tfiErr },
       ] = await Promise.all([
         supabase.from('financial_accounts').select('*').eq('id', accountId).single(),
         supabase.from('financial_accounts').select('*'),
         supabase.from('expenses').select('*').eq('account_id', accountId),
+        supabase
+          .from('shared_expenses')
+          .select('*, shared_groups(name, emoji)')
+          .eq('account_id', accountId),
         supabase
           .from('income_entries')
           .select('*, income_sources(name, emoji)')
@@ -66,6 +81,7 @@ export function useAccountDetail(accountId: string) {
 
       if (accErr) throw accErr
       if (expErr) throw expErr
+      if (seErr)  throw seErr
       if (incErr) throw incErr
       if (tfoErr) throw tfoErr
       if (tfiErr) throw tfiErr
@@ -80,6 +96,20 @@ export function useAccountDetail(accountId: string) {
 
       for (const e of expenses ?? []) {
         result.push({ kind: 'expense', id: e.id, date: e.created_at, amount: e.amount, category: e.category, note: e.note })
+      }
+
+      for (const se of sharedExpenses ?? []) {
+        const grp = se.shared_groups as { name: string; emoji: string } | null
+        result.push({
+          kind: 'shared_expense',
+          id: se.id,
+          date: se.created_at,
+          amount: se.amount,
+          category: se.category,
+          note: se.note,
+          groupName: grp?.name ?? 'Shared Group',
+          groupEmoji: grp?.emoji ?? '👥',
+        })
       }
 
       for (const i of incomes ?? []) {
@@ -126,7 +156,7 @@ export function useAccountDetail(accountId: string) {
 
   const moneyOut = useMemo(() =>
     entries.reduce((s, e) =>
-      (e.kind === 'expense' || (e.kind === 'transfer' && e.direction === 'out')) ? s + e.amount : s, 0),
+      (e.kind === 'expense' || e.kind === 'shared_expense' || (e.kind === 'transfer' && e.direction === 'out')) ? s + e.amount : s, 0),
     [entries]
   )
 

@@ -14,6 +14,7 @@ import {
   BarChart3,
   PieChart,
   Settings,
+  Scale,
 } from 'lucide-react'
 
 type NavItem = {
@@ -63,7 +64,8 @@ const navGroups: NavGroup[] = [
   {
     label: 'Shared',
     items: [
-      { href: '/shared', label: 'Shared Budgets', icon: Users },
+      { href: '/shared',   label: 'Shared Budgets', icon: Users  },
+      { href: '/balances', label: 'Balances',        icon: Scale  },
     ],
   },
   {

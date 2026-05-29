@@ -1,14 +1,15 @@
 'use client'
 
-import { SharedExpense, SharedExpenseSplit } from '@/types'
+import { SharedExpense, SharedExpenseSplit, FinancialAccount } from '@/types'
 import { formatCurrency, formatShortDate } from '@/utils/format'
 import { CATEGORY_COLORS, CATEGORY_ICONS } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
-import { Pencil, Trash2 } from 'lucide-react'
+import { Pencil, Trash2, Clock } from 'lucide-react'
 
 interface Props {
   expense: SharedExpense
   splits: SharedExpenseSplit[]
+  payerAccount?: FinancialAccount | null
   currentUserId: string
   isOwner: boolean
   canEditBudget: boolean
@@ -17,7 +18,7 @@ interface Props {
 }
 
 export function SharedExpenseItem({
-  expense, splits, currentUserId, isOwner, canEditBudget, onEdit, onDelete,
+  expense, splits, payerAccount, currentUserId, isOwner, canEditBudget, onEdit, onDelete,
 }: Props) {
   const icon    = CATEGORY_ICONS[expense.category] ?? '📦'
   const color   = CATEGORY_COLORS[expense.category] ?? '#6b7280'
@@ -25,16 +26,16 @@ export function SharedExpenseItem({
   const canEdit = isMe || isOwner || canEditBudget
   const canDelete = isMe || isOwner
 
-  const payerId     = expense.paid_by_user_id ?? expense.user_id
-  const payerEmail  = expense.paid_by_email   || expense.user_email
-  const paidByMe    = payerId === currentUserId
-  const payerLabel  = paidByMe ? 'You' : payerEmail.split('@')[0]
+  const payerId    = expense.paid_by_user_id ?? expense.user_id
+  const payerEmail = expense.paid_by_email   || expense.user_email
+  const paidByMe   = payerId === currentUserId
+  const payerLabel = paidByMe ? 'You' : payerEmail.split('@')[0]
 
-  // Splits where the debtor is not the payer — these are actual debts
-  const debtSplits = splits.filter((s) => s.debtor_user_id !== payerId)
+  const debtSplits  = splits.filter((s) => s.debtor_user_id !== payerId)
+  const isPending   = expense.payment_source_status === 'pending'
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
+    <div className={`rounded-xl border bg-card overflow-hidden ${isPending ? 'border-blue-500/30' : 'border-border'}`}>
       {/* Main row */}
       <div className="flex items-center gap-3 p-3">
         <div
@@ -52,6 +53,24 @@ export function SharedExpenseItem({
             <span className="text-xs text-muted-foreground">
               Paid by <span className="font-medium text-foreground">{payerLabel}</span>
             </span>
+            {/* Only show account to the payer — payerAccount is null for non-payers (accountsMap RLS) */}
+            {payerAccount && !isPending && (
+              <>
+                <span className="text-muted-foreground/40 text-xs">·</span>
+                <span className="text-xs text-muted-foreground">
+                  {payerAccount.emoji} {payerAccount.name}
+                </span>
+              </>
+            )}
+            {isPending && (
+              <>
+                <span className="text-muted-foreground/40 text-xs">·</span>
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 dark:text-blue-400">
+                  <Clock className="w-3 h-3" />
+                  Payment source pending
+                </span>
+              </>
+            )}
             <span className="text-muted-foreground/40 text-xs">·</span>
             <span className="text-xs text-muted-foreground">{formatShortDate(expense.created_at)}</span>
           </div>

@@ -24,9 +24,10 @@ const TYPE_ICON: Record<string, string> = {
   group_invite:         '👥',
   permission_approved:  '✅',
   member_joined:        '👤',
-  settlement_received:  '💸',
-  settlement_confirmed: '✅',
-  settlement_rejected:  '❌',
+  settlement_received:    '💸',
+  settlement_confirmed:   '✅',
+  settlement_rejected:    '❌',
+  payment_source_pending: '💳',
 }
 
 export function NotificationBell() {

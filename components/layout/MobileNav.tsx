@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import {
-  LayoutDashboard, ArrowLeftRight, Users, BarChart3, Settings,
+  LayoutDashboard, ArrowLeftRight, Users, Scale, Settings,
 } from 'lucide-react'
 
 const navItems = [
@@ -27,10 +27,10 @@ const navItems = [
     activePaths: ['/shared'],
   },
   {
-    href:        '/budgets',
-    label:       'Insights',
-    icon:        BarChart3,
-    activePaths: ['/budgets', '/analytics', '/insights'],
+    href:        '/balances',
+    label:       'Balances',
+    icon:        Scale,
+    activePaths: ['/balances'],
   },
   {
     href:        '/settings',

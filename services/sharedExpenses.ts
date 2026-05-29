@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
-import { SharedExpense, SharedExpenseSplit, SplitMode } from '@/types'
+import { SharedExpense, SharedExpenseSplit, SplitMode, PaymentSourceStatus } from '@/types'
 
 export interface SplitInput {
   user_id: string
@@ -15,7 +15,9 @@ export async function createSharedExpense(
   paidByUserId: string,
   paidByEmail: string,
   splitMode: SplitMode,
-  splits: SplitInput[]
+  splits: SplitInput[],
+  accountId?: string | null,
+  paymentSourceStatus?: PaymentSourceStatus,
 ): Promise<{ expense: SharedExpense; splits: SharedExpenseSplit[] }> {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -24,15 +26,17 @@ export async function createSharedExpense(
   const { data: expense, error } = await supabase
     .from('shared_expenses')
     .insert({
-      group_id:         groupId,
-      user_id:          user.id,
-      user_email:       user.email ?? '',
-      category:         category.trim(),
+      group_id:              groupId,
+      user_id:               user.id,
+      user_email:            user.email ?? '',
+      category:              category.trim(),
       amount,
-      note:             note.trim(),
-      paid_by_user_id:  paidByUserId,
-      paid_by_email:    paidByEmail,
-      split_mode:       splitMode,
+      note:                  note.trim(),
+      paid_by_user_id:       paidByUserId,
+      paid_by_email:         paidByEmail,
+      split_mode:            splitMode,
+      account_id:            accountId ?? null,
+      payment_source_status: paymentSourceStatus ?? 'confirmed',
     })
     .select()
     .single()
@@ -62,18 +66,22 @@ export async function updateSharedExpense(
   paidByUserId: string,
   paidByEmail: string,
   splitMode: SplitMode,
-  splits: SplitInput[]
+  splits: SplitInput[],
+  accountId?: string | null,
+  paymentSourceStatus?: PaymentSourceStatus,
 ): Promise<SharedExpenseSplit[]> {
   const supabase = createClient()
 
   const { error } = await supabase.rpc('update_shared_expense', {
-    p_expense_id:      id,
-    p_category:        category.trim(),
-    p_amount:          amount,
-    p_note:            note.trim(),
-    p_paid_by_user_id: paidByUserId,
-    p_paid_by_email:   paidByEmail,
-    p_split_mode:      splitMode,
+    p_expense_id:            id,
+    p_category:              category.trim(),
+    p_amount:                amount,
+    p_note:                  note.trim(),
+    p_paid_by_user_id:       paidByUserId,
+    p_paid_by_email:         paidByEmail,
+    p_split_mode:            splitMode,
+    p_account_id:            accountId ?? null,
+    p_payment_source_status: paymentSourceStatus ?? 'confirmed',
   })
   if (error) throw new Error(error.message)
 
@@ -94,6 +102,18 @@ export async function updateSharedExpense(
   if (splitErr) throw splitErr
 
   return insertedSplits ?? []
+}
+
+export async function confirmPaymentSource(
+  expenseId: string,
+  accountId?: string | null,
+): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.rpc('confirm_payment_source', {
+    p_expense_id: expenseId,
+    p_account_id: accountId ?? null,
+  })
+  if (error) throw new Error(error.message)
 }
 
 export async function deleteSharedExpense(id: string): Promise<void> {

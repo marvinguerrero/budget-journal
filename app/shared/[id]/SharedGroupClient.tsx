@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   SharedGroup, SharedGroupMember, SharedBudget, SharedExpense,
-  SharedExpenseSplit, SharedExpenseSettlement, PermissionRequest, SplitMode,
+  SharedExpenseSplit, SharedExpenseSettlement, PermissionRequest,
+  SplitMode, PaymentSourceStatus,
 } from '@/types'
 import {
   getSharedGroupDetails, inviteMember, removeMember, leaveGroup,
@@ -12,10 +13,11 @@ import {
 } from '@/services/sharedGroups'
 import { createSharedBudget, updateSharedBudget, deleteSharedBudget } from '@/services/sharedBudgets'
 import {
-  createSharedExpense, updateSharedExpense, deleteSharedExpense, SplitInput,
+  createSharedExpense, updateSharedExpense, deleteSharedExpense,
+  confirmPaymentSource, SplitInput,
 } from '@/services/sharedExpenses'
 import {
-  createSettlement, confirmSettlement, rejectSettlement,
+  createSettlement, confirmSettlement, rejectSettlement, recallSettlement,
 } from '@/services/settlements'
 import {
   createPermissionRequest, approvePermissionRequest, rejectPermissionRequest,
@@ -41,14 +43,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { BottomSheet } from '@/components/common/BottomSheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { DEFAULT_CATEGORIES } from '@/lib/constants'
+import { DEFAULT_CATEGORIES, CATEGORY_ICONS } from '@/lib/constants'
 import { formatCurrency, formatShortDate } from '@/utils/format'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import {
   ArrowLeft, Plus, MoreHorizontal, Trash2, LogOut, Target, Users,
-  CheckCircle2, XCircle, Clock, Wallet,
+  CheckCircle2, XCircle, Clock, Wallet, Undo2,
 } from 'lucide-react'
 
 interface Props {
@@ -221,6 +223,44 @@ function SplitSection({
   )
 }
 
+interface AccountSelectorChipsProps {
+  accounts: Array<{ id: string; emoji: string; name: string }>
+  value: string
+  onChange: (id: string) => void
+}
+
+function AccountSelectorChips({ accounts, value, onChange }: AccountSelectorChipsProps) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-sm font-semibold flex items-center gap-1.5">
+        <Wallet className="w-3.5 h-3.5" />
+        Pay from account
+      </Label>
+      {accounts.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No accounts found — add one in Settings.</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {accounts.map((acc) => (
+            <button
+              key={acc.id}
+              type="button"
+              onClick={() => onChange(value === acc.id ? '' : acc.id)}
+              className={cn(
+                'flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                value === acc.id
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {acc.emoji} {acc.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function computeSplits(
   mode: SplitMode,
   participants: Participant[],
@@ -269,6 +309,11 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const [confirmAccountId,       setConfirmAccountId]       = useState('')
   const [isSavingConfirm,        setIsSavingConfirm]        = useState(false)
 
+  // ── Confirm payment source dialog state ───────────────────────
+  const [confirmingPaymentSource, setConfirmingPaymentSource] = useState<SharedExpense | null>(null)
+  const [paymentSourceAccountId,  setPaymentSourceAccountId]  = useState('')
+  const [isSavingPaymentSource,   setIsSavingPaymentSource]   = useState(false)
+
   // ── UI state ───────────────────────────────────────────────────
   const [activeTab, setActiveTab]     = useState<'overview' | 'chat'>('overview')
   const [showAddExpense, setShowAddExpense] = useState(false)
@@ -284,6 +329,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const [expenseSplitMode,   setExpenseSplitMode]   = useState<SplitMode>('equal')
   const [expenseIncluded,    setExpenseIncluded]    = useState<Record<string, boolean>>({})
   const [expenseCustomAmts,  setExpenseCustomAmts]  = useState<Record<string, string>>({})
+  const [expenseAccountId,   setExpenseAccountId]   = useState('')
 
   // ── Edit expense form ──────────────────────────────────────────
   const [editingExpense,         setEditingExpense]         = useState<SharedExpense | null>(null)
@@ -295,6 +341,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const [editExpenseSplitMode,   setEditExpenseSplitMode]   = useState<SplitMode>('equal')
   const [editExpenseIncluded,    setEditExpenseIncluded]    = useState<Record<string, boolean>>({})
   const [editExpenseCustomAmts,  setEditExpenseCustomAmts]  = useState<Record<string, string>>({})
+  const [editExpenseAccountId,   setEditExpenseAccountId]   = useState('')
 
   // ── Budget form ────────────────────────────────────────────────
   const [budgetCategory, setBudgetCategory] = useState('')
@@ -334,6 +381,9 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
     return map
   }, [splits])
+
+  const accountsMap = useMemo(() =>
+    new Map(accounts.map((a) => [a.id, a])), [accounts])
 
   const netBalances = useMemo((): NetBalance[] => {
     const net: Record<string, Record<string, number>> = {}
@@ -435,6 +485,8 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       const { expense, splits: newSplits } = await createSharedExpense(
         groupId, expenseCategory, amt, expenseNote,
         expensePaidById, expensePaidByEmail, expenseSplitMode, computedSplits,
+        expensePaidById === currentUserId ? (expenseAccountId || null) : null,
+        expensePaidById === currentUserId ? 'confirmed' : 'pending',
       )
       setExpenses((prev) => [expense, ...prev])
       setSplits((prev) => [...prev, ...newSplits])
@@ -456,6 +508,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     setExpenseSplitMode('equal')
     setExpenseIncluded({})
     setExpenseCustomAmts({})
+    setExpenseAccountId('')
   }
 
   const handleDeleteExpense = async (id: string) => {
@@ -479,6 +532,12 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     setEditExpensePaidById(payerId)
     setEditExpensePaidByEmail(expense.paid_by_email || expense.user_email)
     setEditExpenseSplitMode(expense.split_mode ?? 'equal')
+
+    setEditExpenseAccountId(
+      (expense.paid_by_user_id ?? expense.user_id) === currentUserId
+        ? (expense.account_id ?? '')
+        : ''
+    )
 
     const expSplits = splitsByExpense.get(expense.id) ?? []
     if (expense.split_mode === 'custom' && expSplits.length > 0) {
@@ -514,13 +573,19 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       const newSplits = await updateSharedExpense(
         editingExpense.id, editExpenseCategory, amt, editExpenseNote,
         editExpensePaidById, editExpensePaidByEmail, editExpenseSplitMode, computedSplits,
+        editExpensePaidById === currentUserId ? (editExpenseAccountId || null) : null,
+        editExpensePaidById === currentUserId ? 'confirmed' : 'pending',
       )
+      const newStatus: PaymentSourceStatus = editExpensePaidById === currentUserId ? 'confirmed' : 'pending'
+      const newAccountId = editExpensePaidById === currentUserId ? (editExpenseAccountId || null) : null
       setExpenses((prev) =>
         prev.map((ex) =>
           ex.id === editingExpense.id
             ? { ...ex, category: editExpenseCategory, amount: amt, note: editExpenseNote,
                 paid_by_user_id: editExpensePaidById, paid_by_email: editExpensePaidByEmail,
-                split_mode: editExpenseSplitMode }
+                split_mode: editExpenseSplitMode,
+                account_id: newAccountId,
+                payment_source_status: newStatus }
             : ex
         )
       )
@@ -752,6 +817,42 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
+  const handleRecallSettlement = async (id: string) => {
+    try {
+      await recallSettlement(id)
+      setSettlements((prev) =>
+        prev.map((s) => s.id === id ? { ...s, status: 'recalled' as const } : s)
+      )
+      toast.success('Settlement recalled')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to recall')
+    }
+  }
+
+  // ── confirm payment source handler ────────────────────────────
+  const handleConfirmPaymentSource = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!confirmingPaymentSource) return
+    setIsSavingPaymentSource(true)
+    try {
+      await confirmPaymentSource(confirmingPaymentSource.id, paymentSourceAccountId || null)
+      setExpenses((prev) =>
+        prev.map((ex) =>
+          ex.id === confirmingPaymentSource.id
+            ? { ...ex, payment_source_status: 'confirmed' as const, account_id: paymentSourceAccountId || null }
+            : ex
+        )
+      )
+      setConfirmingPaymentSource(null)
+      setPaymentSourceAccountId('')
+      toast.success('Payment source confirmed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to confirm')
+    } finally {
+      setIsSavingPaymentSource(false)
+    }
+  }
+
   // ── add expense form ───────────────────────────────────────────
   const addExpenseAmt = parseFloat(expenseAmount) || 0
 
@@ -799,9 +900,16 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
             participants={allParticipants}
             currentUserId={currentUserId}
             value={expensePaidById}
-            onChange={setExpensePaidById}
+            onChange={(id) => { setExpensePaidById(id); if (id !== currentUserId) setExpenseAccountId('') }}
             onEmailChange={setExpensePaidByEmail}
           />
+          {expensePaidById === currentUserId && (
+            <AccountSelectorChips
+              accounts={accounts}
+              value={expenseAccountId}
+              onChange={setExpenseAccountId}
+            />
+          )}
           <SplitSection
             participants={allParticipants}
             currentUserId={currentUserId}
@@ -1020,6 +1128,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                     key={exp.id}
                     expense={exp}
                     splits={splitsByExpense.get(exp.id) ?? []}
+                    payerAccount={exp.account_id ? accountsMap.get(exp.account_id) ?? null : null}
                     currentUserId={currentUserId}
                     isOwner={isOwner}
                     canEditBudget={myPerms.canEditBudget}
@@ -1030,6 +1139,48 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               </div>
             )}
           </div>
+
+          {/* ── Payment Source Needed (current user is the unconfirmed payer) ── */}
+          {expenses.some((e) => e.paid_by_user_id === currentUserId && e.payment_source_status === 'pending') && (
+            <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <p className="text-sm font-semibold text-blue-700 dark:text-blue-400">Payment Source Needed</p>
+              </div>
+              <div className="space-y-2">
+                {expenses
+                  .filter((e) => e.paid_by_user_id === currentUserId && e.payment_source_status === 'pending')
+                  .map((e) => {
+                    const icon  = CATEGORY_ICONS[e.category] ?? '📦'
+                    const creatorName = e.user_email.split('@')[0]
+                    return (
+                      <div key={e.id} className="flex items-center gap-3 p-3 rounded-xl bg-background border border-border">
+                        <span className="text-base flex-shrink-0">{icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold truncate">{e.note || e.category}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Added by {creatorName} · {e.category}
+                          </p>
+                        </div>
+                        <span className="font-bold tabular-nums text-sm text-foreground flex-shrink-0">
+                          {formatCurrency(e.amount)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => { setConfirmingPaymentSource(e); setPaymentSourceAccountId('') }}
+                          className="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors flex-shrink-0"
+                        >
+                          Select
+                        </button>
+                      </div>
+                    )
+                  })}
+              </div>
+              <p className="text-[10px] text-blue-600/70 dark:text-blue-400/70">
+                Select which account you used to pay. Only you can see your accounts.
+              </p>
+            </div>
+          )}
 
           {/* ── Balances ── */}
           <BalanceSummary
@@ -1095,22 +1246,27 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                     const counterEmail = isSender ? s.receiver_email : s.payer_email
                     const counterName  = counterEmail.split('@')[0]
 
-                    const statusIcon  = s.status === 'confirmed'
-                      ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-                      : s.status === 'rejected'
-                        ? <XCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
-                        : <Clock className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                    const isPending  = s.status === 'pending_confirmation'
+                    const isRecalled = s.status === 'recalled'
 
-                    const statusLabel = s.status === 'confirmed'
-                      ? (isSender ? `${counterName} confirmed` : 'Confirmed')
-                      : s.status === 'rejected'
-                        ? 'Rejected'
-                        : 'Pending confirmation'
+                    const statusIcon =
+                      s.status === 'confirmed'  ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" /> :
+                      s.status === 'rejected'   ? <XCircle      className="w-3.5 h-3.5 text-destructive  flex-shrink-0" /> :
+                      s.status === 'recalled'   ? <Undo2        className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" /> :
+                                                  <Clock        className="w-3.5 h-3.5 text-amber-500   flex-shrink-0" />
+
+                    const statusLabel =
+                      s.status === 'confirmed'  ? (isSender ? `${counterName} confirmed` : 'Confirmed') :
+                      s.status === 'rejected'   ? 'Rejected'  :
+                      s.status === 'recalled'   ? 'Recalled'  :
+                                                  'Pending confirmation'
+
+                    const isStrikethrough = s.status === 'rejected' || s.status === 'recalled'
 
                     return (
                       <div key={s.id} className="flex items-center gap-3 p-3 rounded-xl bg-accent/40">
                         <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-base flex-shrink-0">
-                          {isSender ? '💸' : '💰'}
+                          {isRecalled ? '↩️' : isSender ? '💸' : '💰'}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">
@@ -1122,11 +1278,23 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                           </div>
                         </div>
                         <span className={`font-bold tabular-nums text-sm flex-shrink-0 ${
-                          s.status === 'rejected' ? 'text-muted-foreground line-through' :
-                          isSender ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
+                          isStrikethrough      ? 'text-muted-foreground line-through' :
+                          isSender             ? 'text-rose-600 dark:text-rose-400'  :
+                                                 'text-emerald-600 dark:text-emerald-400'
                         }`}>
                           {isSender ? '-' : '+'}{formatCurrency(s.amount)}
                         </span>
+                        {/* Recall button: payer only, pending only */}
+                        {isSender && isPending && (
+                          <button
+                            type="button"
+                            onClick={() => handleRecallSettlement(s.id)}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-muted border border-border text-[11px] font-semibold text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0"
+                          >
+                            <Undo2 className="w-3 h-3" />
+                            Recall
+                          </button>
+                        )}
                       </div>
                     )
                   })}
@@ -1246,9 +1414,16 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                   participants={allParticipants}
                   currentUserId={currentUserId}
                   value={editExpensePaidById}
-                  onChange={setEditExpensePaidById}
+                  onChange={(id) => { setEditExpensePaidById(id); if (id !== currentUserId) setEditExpenseAccountId('') }}
                   onEmailChange={setEditExpensePaidByEmail}
                 />
+                {editExpensePaidById === currentUserId && (
+                  <AccountSelectorChips
+                    accounts={accounts}
+                    value={editExpenseAccountId}
+                    onChange={setEditExpenseAccountId}
+                  />
+                )}
                 <SplitSection
                   participants={allParticipants}
                   currentUserId={currentUserId}
@@ -1511,6 +1686,100 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 </Button>
                 <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingConfirm}>
                   {isSavingConfirm ? 'Confirming…' : 'Confirm Received'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Confirm payment source dialog (payer selects their account) ── */}
+      <Dialog
+        open={!!confirmingPaymentSource}
+        onOpenChange={(o) => { if (!o) { setConfirmingPaymentSource(null); setPaymentSourceAccountId('') } }}
+      >
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Select Payment Source</DialogTitle>
+          </DialogHeader>
+          {confirmingPaymentSource && (
+            <form onSubmit={handleConfirmPaymentSource} className="space-y-4">
+              {/* Expense summary */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-blue-500/8 border border-blue-500/20">
+                <div>
+                  <p className="text-xs text-muted-foreground">Expense you paid</p>
+                  <p className="text-sm font-semibold">
+                    {confirmingPaymentSource.note || confirmingPaymentSource.category}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Added by {confirmingPaymentSource.user_email.split('@')[0]}
+                  </p>
+                </div>
+                <span className="text-lg font-bold tabular-nums text-foreground">
+                  {formatCurrency(confirmingPaymentSource.amount)}
+                </span>
+              </div>
+
+              {/* Private account selector — only the payer sees their own accounts */}
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold flex items-center gap-1.5">
+                  <Wallet className="w-3.5 h-3.5" />
+                  Which account did you use?
+                </Label>
+                <p className="text-xs text-muted-foreground -mt-1">
+                  Only you can see your accounts. Other members won't see this.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentSourceAccountId('')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                      !paymentSourceAccountId
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    Don't track
+                  </button>
+                  {accounts.map((acc) => (
+                    <button
+                      key={acc.id}
+                      type="button"
+                      onClick={() => setPaymentSourceAccountId(acc.id)}
+                      className={cn(
+                        'flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                        paymentSourceAccountId === acc.id
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {acc.emoji} {acc.name}
+                    </button>
+                  ))}
+                </div>
+                {paymentSourceAccountId && (
+                  <p className="text-xs text-muted-foreground">
+                    {formatCurrency(confirmingPaymentSource.amount)} will be deducted from this account.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1 h-11 rounded-xl"
+                  onClick={() => { setConfirmingPaymentSource(null); setPaymentSourceAccountId('') }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 h-11 rounded-xl font-semibold"
+                  disabled={isSavingPaymentSource}
+                >
+                  {isSavingPaymentSource ? 'Saving…' : 'Confirm'}
                 </Button>
               </div>
             </form>

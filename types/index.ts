@@ -113,6 +113,7 @@ export interface AppNotification {
     | 'settlement_received'
     | 'settlement_confirmed'
     | 'settlement_rejected'
+    | 'payment_source_pending'
   title: string
   message: string
   is_read: boolean
@@ -120,7 +121,7 @@ export interface AppNotification {
   created_at: string
 }
 
-export type SettlementStatus = 'pending_confirmation' | 'confirmed' | 'rejected'
+export type SettlementStatus = 'pending_confirmation' | 'confirmed' | 'rejected' | 'recalled'
 
 export interface SharedExpenseSettlement {
   id: string
@@ -151,6 +152,8 @@ export interface GroupMessage {
 
 export type SplitMode = 'equal' | 'custom'
 
+export type PaymentSourceStatus = 'pending' | 'confirmed'
+
 export interface SharedExpense {
   id: string
   group_id: string
@@ -162,6 +165,8 @@ export interface SharedExpense {
   paid_by_user_id: string | null
   paid_by_email: string
   split_mode: SplitMode
+  account_id: string | null
+  payment_source_status: PaymentSourceStatus
   created_at: string
 }
 

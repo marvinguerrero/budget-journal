@@ -11,6 +11,7 @@ import { CategoryPieChart } from '@/components/dashboard/CategoryPieChart'
 import { ExpenseItem } from '@/components/expenses/ExpenseItem'
 import { QuickAddButton } from '@/components/expenses/QuickAddButton'
 import { InsightSummary } from '@/components/budgets/InsightSummary'
+import { DashboardBalanceCard } from '@/components/dashboard/DashboardBalanceCard'
 import { useExpenseStore } from '@/store/useExpenseStore'
 import { useExpenses } from '@/hooks/useExpenses'
 import { useCategories } from '@/hooks/useCategories'
@@ -291,6 +292,8 @@ export function DashboardClient({
       </div>
 
       <InsightSummary budgets={budgets} expenses={expenses} categories={categories} />
+
+      <DashboardBalanceCard />
 
       <div className="rounded-2xl border border-border bg-card p-4">
         <div className="flex items-center justify-between mb-4">
