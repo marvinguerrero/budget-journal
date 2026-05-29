@@ -16,6 +16,7 @@ import {
 import { Plus, Users } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
+import Link from 'next/link'
 
 const PRESET_EMOJIS = ['👥', '🏠', '✈️', '🎉', '💍', '👫', '🍕', '🛒', '🏖️', '💼', '🎓', '🌍']
 
@@ -74,6 +75,15 @@ export default function SharedPage() {
           <Plus className="w-3.5 h-3.5" />
           New Group
         </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Link href="/shared" className="h-10 rounded-xl border border-primary bg-primary/10 text-primary text-sm font-semibold flex items-center justify-center">
+          Shared Budgets
+        </Link>
+        <Link href="/shared/contacts" className="h-10 rounded-xl border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent text-sm font-semibold flex items-center justify-center">
+          Contacts
+        </Link>
       </div>
 
       {isLoading ? (

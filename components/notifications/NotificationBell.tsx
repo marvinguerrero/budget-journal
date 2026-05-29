@@ -10,6 +10,7 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
 } from '@/services/notifications'
+import { acceptContactRequest, declineContactRequest } from '@/services/contacts'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +29,8 @@ const TYPE_ICON: Record<string, string> = {
   settlement_confirmed:   '✅',
   settlement_rejected:    '❌',
   payment_source_pending: '💳',
+  contact_request:         '🤝',
+  personal_debt_created:   '🧾',
 }
 
 export function NotificationBell() {
@@ -73,7 +76,28 @@ export function NotificationBell() {
     }
     if (n.related_id) {
       setOpen(false)
-      router.push(`/shared/${n.related_id}`)
+      router.push(
+        n.type === 'contact_request'
+          ? '/shared/contacts'
+          : n.type === 'personal_debt_created'
+            ? '/balances'
+            : `/shared/${n.related_id}`
+      )
+    }
+  }
+
+  const handleContactResponse = async (n: AppNotification, action: 'accept' | 'decline') => {
+    if (!n.related_id) return
+    try {
+      if (action === 'accept') {
+        await acceptContactRequest(n.related_id)
+      } else {
+        await declineContactRequest(n.related_id)
+      }
+      setNotifications((prev) => prev.filter((item) => item.id !== n.id))
+      markNotificationRead(n.id).catch(() => null)
+    } catch {
+      // Keep the notification visible so the user can retry.
     }
   }
 
@@ -138,6 +162,46 @@ export function NotificationBell() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground truncate mt-0.5">{n.message}</p>
+                  {n.type === 'contact_request' && n.title === 'Contact request' && (
+                    <div className="flex gap-2 mt-2">
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleContactResponse(n, 'accept')
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            handleContactResponse(n, 'accept')
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-semibold"
+                      >
+                        Accept
+                      </span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleContactResponse(n, 'decline')
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            handleContactResponse(n, 'decline')
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-muted border border-border text-[11px] font-semibold text-muted-foreground"
+                      >
+                        Decline
+                      </span>
+                    </div>
+                  )}
                   <p className="text-[10px] text-muted-foreground/50 mt-1">
                     {formatRelativeTime(n.created_at)}
                   </p>

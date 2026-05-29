@@ -6,5 +6,5 @@ export default async function BalancesPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
-  return <BalancesClient userId={user.id} userEmail={user.email ?? ''} />
+  return <BalancesClient userId={user.id} />
 }

@@ -114,6 +114,8 @@ export interface AppNotification {
     | 'settlement_confirmed'
     | 'settlement_rejected'
     | 'payment_source_pending'
+    | 'contact_request'
+    | 'personal_debt_created'
   title: string
   message: string
   is_read: boolean
@@ -122,6 +124,8 @@ export interface AppNotification {
 }
 
 export type SettlementStatus = 'pending_confirmation' | 'confirmed' | 'rejected' | 'recalled'
+export type PersonalObligationDirection = 'owed_to_user' | 'user_owes'
+export type PersonalObligationStatus = 'open' | 'settled'
 
 export interface SharedExpenseSettlement {
   id: string
@@ -131,6 +135,8 @@ export interface SharedExpenseSettlement {
   receiver_user_id: string
   receiver_email: string
   amount: number
+  original_amount?: number | null
+  confirmed_amount?: number | null
   payer_account_id: string | null
   receiver_account_id: string | null
   expense_id: string | null
@@ -139,6 +145,89 @@ export interface SharedExpenseSettlement {
   note: string
   created_at: string
   confirmed_at: string | null
+  confirmed_by_user_id?: string | null
+  confirmation_reversed_at?: string | null
+  payer_account_label?: string | null
+  receiver_account_label?: string | null
+  account_movement_processed?: boolean
+  account_movement_processed_at?: string | null
+}
+
+export interface PersonalObligation {
+  id: string
+  user_id: string
+  direction: PersonalObligationDirection
+  contact_id?: string | null
+  relationship_id?: string | null
+  counterparty_obligation_id?: string | null
+  created_by_user_id?: string | null
+  contact_user_id: string | null
+  contact_name: string
+  contact_email: string | null
+  amount: number
+  remaining_amount: number
+  category: string
+  note: string
+  source_expense_id: string | null
+  status: PersonalObligationStatus
+  created_at: string
+  settled_at: string | null
+}
+
+export interface PersonalObligationSettlement {
+  id: string
+  obligation_id: string
+  user_id: string
+  amount: number
+  original_amount?: number | null
+  confirmed_amount?: number | null
+  payer_account_id: string | null
+  receiver_account_id: string | null
+  relationship_id?: string | null
+  counterparty_settlement_id?: string | null
+  status: Extract<SettlementStatus, 'pending_confirmation' | 'confirmed' | 'recalled'>
+  note: string
+  created_at: string
+  confirmed_at: string | null
+  recalled_at: string | null
+  confirmed_by_user_id?: string | null
+  confirmation_reversed_at?: string | null
+  account_movement_processed?: boolean
+  account_movement_processed_at?: string | null
+}
+
+export type ContactType = 'external' | 'registered'
+
+export interface Contact {
+  id: string
+  user_id: string
+  name: string
+  email: string | null
+  phone: string | null
+  notes: string | null
+  contact_type: ContactType
+  link_status?: 'none' | 'pending' | 'connected' | 'declined'
+  linked_user_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ContactRequestStatus = 'pending' | 'accepted' | 'declined'
+
+export interface ContactRequest {
+  id: string
+  requester_user_id: string
+  target_user_id: string
+  status: ContactRequestStatus
+  created_at: string
+  responded_at: string | null
+}
+
+export interface ContactFormData {
+  name: string
+  email?: string | null
+  phone?: string | null
+  notes?: string | null
 }
 
 export interface GroupMessage {
@@ -187,6 +276,7 @@ export interface Expense {
   note: string
   account_id?: string | null
   created_at: string
+  personal_obligations?: PersonalObligation[]
 }
 
 export interface Budget {
@@ -215,6 +305,11 @@ export interface ExpenseFormData {
   note: string
   account_id?: string | null
   created_at?: string
+  obligation_type?: 'normal' | 'owe_me' | 'i_owe'
+  contact_id?: string | null
+  contact_user_id?: string | null
+  contact_name?: string
+  contact_email?: string | null
 }
 
 export interface BudgetFormData {

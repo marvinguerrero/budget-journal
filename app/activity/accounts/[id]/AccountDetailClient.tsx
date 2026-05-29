@@ -7,7 +7,7 @@ import { formatCurrency } from '@/utils/format'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import {
-  ArrowLeft, TrendingDown, TrendingUp, ArrowLeftRight, CreditCard, ArrowRight,
+  ArrowLeft, TrendingUp, ArrowLeftRight, CreditCard, ArrowRight, HandCoins,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -26,7 +26,7 @@ export function AccountDetailClient({ accountId }: Props) {
     entries.filter((e) =>
       kindFilter === 'expenses'  ? (e.kind === 'expense' || e.kind === 'shared_expense') :
       kindFilter === 'income'    ? e.kind === 'income' :
-      e.kind === 'transfer'
+      e.kind === 'transfer' || e.kind === 'personal_settlement'
     ),
     [entries, kindFilter]
   )
@@ -275,6 +275,35 @@ function AccountDetailEntryItem({ entry, isLiab }: { entry: AccountDetailEntry; 
         </div>
         <p className="text-sm font-bold tabular-nums text-emerald-600 dark:text-emerald-400 flex-shrink-0">
           +{formatCurrency(entry.amount)}
+        </p>
+      </div>
+    )
+  }
+
+  if (entry.kind === 'personal_settlement') {
+    const incoming = entry.direction === 'in'
+    return (
+      <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-card border border-border">
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${incoming ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}>
+          <HandCoins className={`w-4 h-4 ${incoming ? 'text-emerald-500' : 'text-amber-500'}`} />
+        </div>
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <div className="flex items-center gap-1.5">
+            <span className={`text-[10px] font-semibold uppercase tracking-wide ${incoming ? 'text-emerald-500' : 'text-amber-500'}`}>
+              Personal Settlement
+            </span>
+            <span className="text-[10px] text-muted-foreground">· {date}</span>
+            {entry.status === 'pending_confirmation' && (
+              <span className="text-[10px] text-blue-500">· Pending</span>
+            )}
+          </div>
+          <p className="text-sm font-semibold truncate">
+            {incoming ? `Received from ${entry.contactName}` : `Paid ${entry.contactName}`}
+          </p>
+          {entry.note && <p className="text-[10px] text-muted-foreground truncate">{entry.note}</p>}
+        </div>
+        <p className={`text-sm font-bold tabular-nums flex-shrink-0 ${incoming ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+          {incoming ? '+' : '-'}{formatCurrency(entry.amount)}
         </p>
       </div>
     )

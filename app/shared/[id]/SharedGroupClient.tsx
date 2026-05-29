@@ -308,6 +308,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const [confirmingSettlement,   setConfirmingSettlement]   = useState<SharedExpenseSettlement | null>(null)
   const [confirmAccountId,       setConfirmAccountId]       = useState('')
   const [isSavingConfirm,        setIsSavingConfirm]        = useState(false)
+  const [reviewingSettlement,    setReviewingSettlement]    = useState<SharedExpenseSettlement | null>(null)
+  const [reviewAccountId,        setReviewAccountId]        = useState('')
+  const [reviewAmount,           setReviewAmount]           = useState('')
+  const [isSavingReview,         setIsSavingReview]         = useState(false)
 
   // ── Confirm payment source dialog state ───────────────────────
   const [confirmingPaymentSource, setConfirmingPaymentSource] = useState<SharedExpense | null>(null)
@@ -805,6 +809,61 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
   }
 
+  const accountLabel = (id?: string | null) => {
+    if (!id) return 'No account selected'
+    const account = accounts.find((a) => a.id === id)
+    return account ? `${account.emoji} ${account.name}` : 'Selected account'
+  }
+
+  const openSettlementReview = (settlement: SharedExpenseSettlement) => {
+    setReviewingSettlement(settlement)
+    setReviewAmount(String(settlement.amount))
+    setReviewAccountId(settlement.receiver_account_id ?? '')
+  }
+
+  const closeSettlementReview = () => {
+    setReviewingSettlement(null)
+    setReviewAmount('')
+    setReviewAccountId('')
+  }
+
+  const handleReviewConfirmSettlement = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!reviewingSettlement) return
+
+    const amount = Number(reviewAmount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error('Settlement amount must be greater than zero')
+      return
+    }
+    if (amount > reviewingSettlement.amount + 0.005) {
+      toast.error('Settlement amount cannot exceed the remaining balance')
+      return
+    }
+
+    setIsSavingReview(true)
+    try {
+      await confirmSettlement(reviewingSettlement.id, reviewAccountId || null, amount)
+      setSettlements((prev) =>
+        prev.map((s) => s.id === reviewingSettlement.id
+          ? {
+              ...s,
+              amount,
+              status: 'confirmed' as const,
+              confirmed_at: new Date().toISOString(),
+              receiver_account_id: reviewAccountId || null,
+            }
+          : s)
+      )
+      closeSettlementReview()
+      toast.success(amount >= reviewingSettlement.amount - 0.005 ? 'Payment confirmed!' : 'Partial payment confirmed!')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to confirm')
+    } finally {
+      setIsSavingReview(false)
+    }
+  }
+
   const handleRejectSettlement = async (id: string) => {
     try {
       await rejectSettlement(id)
@@ -1215,7 +1274,14 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                       <div className="flex gap-1.5 flex-shrink-0">
                         <button
                           type="button"
-                          onClick={() => setConfirmingSettlement(s)}
+                          onClick={() => openSettlementReview(s)}
+                          className="px-2.5 py-1.5 rounded-lg bg-muted border border-border text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                        >
+                          Review
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openSettlementReview(s)}
                           className="px-2.5 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-600 transition-colors"
                         >
                           Confirm
@@ -1582,7 +1648,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 </div>
                 {settleAccountId && (
                   <p className="text-xs text-muted-foreground">
-                    {formatCurrency(settlingBalance.amount)} will be deducted from this account immediately.
+                    {formatCurrency(settlingBalance.amount)} will be deducted when the receiver confirms payment.
                   </p>
                 )}
               </div>
@@ -1604,6 +1670,155 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 </Button>
                 <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingSettle}>
                   {isSavingSettle ? 'Sending…' : 'Mark as Paid'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Settlement review and confirmation ── */}
+      <Dialog open={!!reviewingSettlement} onOpenChange={(o) => { if (!o) closeSettlementReview() }}>
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Payment Review</DialogTitle>
+          </DialogHeader>
+          {reviewingSettlement && (
+            <form onSubmit={handleReviewConfirmSettlement} className="space-y-4">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-muted/60 border border-border">
+                <div>
+                  <p className="text-xs text-muted-foreground">Payment from</p>
+                  <p className="text-sm font-semibold">{reviewingSettlement.payer_email.split('@')[0]}</p>
+                  {reviewingSettlement.note && (
+                    <p className="text-xs text-muted-foreground mt-0.5">{reviewingSettlement.note}</p>
+                  )}
+                </div>
+                <span className="text-xl font-bold tabular-nums">
+                  {formatCurrency(Number(reviewAmount) || reviewingSettlement.amount)}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Settlement Amount</Label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.01"
+                    max={reviewingSettlement.amount}
+                    step="0.01"
+                    value={reviewAmount}
+                    onChange={(e) => setReviewAmount(e.target.value)}
+                    className="pl-8 h-11 rounded-xl font-semibold"
+                    required
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Outstanding balance: {formatCurrency(reviewingSettlement.amount)}
+                </p>
+                <p className="text-xs font-medium text-muted-foreground">
+                  Result: {reviewingSettlement.amount - (Number(reviewAmount) || 0) <= 0.005 ? 'Settled' : 'Partially Settled'}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold flex items-center gap-1.5">
+                  <Wallet className="w-3.5 h-3.5" />
+                  Destination account <span className="text-muted-foreground font-normal">(optional)</span>
+                </Label>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setReviewAccountId('')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                      !reviewAccountId
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    No account
+                  </button>
+                  {accounts.map((acc) => (
+                    <button
+                      key={acc.id}
+                      type="button"
+                      onClick={() => setReviewAccountId(acc.id)}
+                      className={cn(
+                        'flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+                        reviewAccountId === acc.id
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {acc.emoji} {acc.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Status</span>
+                  <span className="font-medium capitalize">
+                    {reviewingSettlement.status.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">From</span>
+                  <span className="font-medium text-right">
+                    {reviewingSettlement.payer_account_label ?? accountLabel(reviewingSettlement.payer_account_id)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">To</span>
+                  <span className="font-medium text-right">
+                    {accountLabel(reviewAccountId || reviewingSettlement.receiver_account_id)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-xl border border-border bg-muted/40 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold">Payment History</p>
+                  <p className="text-xs text-muted-foreground">
+                    Remaining after this: {formatCurrency(Math.max(0, reviewingSettlement.amount - (Number(reviewAmount) || 0)))}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  {settlements
+                    .filter((settlement) =>
+                      settlement.status === 'confirmed' &&
+                      settlement.group_id === reviewingSettlement.group_id &&
+                      settlement.payer_user_id === reviewingSettlement.payer_user_id &&
+                      settlement.receiver_user_id === reviewingSettlement.receiver_user_id
+                    )
+                    .map((settlement) => (
+                      <div key={settlement.id} className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">
+                          {new Date(settlement.confirmed_at ?? settlement.created_at).toLocaleDateString()}
+                        </span>
+                        <span className="font-semibold tabular-nums">{formatCurrency(settlement.amount)}</span>
+                      </div>
+                    ))}
+                  {!settlements.some((settlement) =>
+                    settlement.status === 'confirmed' &&
+                    settlement.group_id === reviewingSettlement.group_id &&
+                    settlement.payer_user_id === reviewingSettlement.payer_user_id &&
+                    settlement.receiver_user_id === reviewingSettlement.receiver_user_id
+                  ) && (
+                    <p className="text-xs text-muted-foreground">No confirmed payments yet.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={closeSettlementReview}>
+                  Close
+                </Button>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingReview}>
+                  {isSavingReview ? 'Confirming…' : 'Confirm Received'}
                 </Button>
               </div>
             </form>

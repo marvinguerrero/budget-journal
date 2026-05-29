@@ -107,14 +107,14 @@ export default function AccountsPage() {
   const visibleEntries = useMemo(() => {
     if (typeFilter !== 'all') {
       return entries.filter((e) => {
-        if (e.kind === 'expense' || e.kind === 'income') return e.account.type === typeFilter
+        if (e.kind === 'expense' || e.kind === 'income' || e.kind === 'personal_settlement' || e.kind === 'settlement_history') return e.account.type === typeFilter
         return e.fromAccount.type === typeFilter || e.toAccount.type === typeFilter
       })
     }
     if (categoryFilter !== 'all') {
       return entries.filter((e) => {
         const isLiab = (type: string) => isLiabilityType(type)
-        if (e.kind === 'expense' || e.kind === 'income') {
+        if (e.kind === 'expense' || e.kind === 'income' || e.kind === 'personal_settlement' || e.kind === 'settlement_history') {
           return categoryFilter === 'liability' ? isLiab(e.account.type) : !isLiab(e.account.type)
         }
         return true

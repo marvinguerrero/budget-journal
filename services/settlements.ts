@@ -40,42 +40,19 @@ export async function createSettlement(payload: {
     .select()
     .single()
   if (settleErr) throw settleErr
-
-  // Create expense on payer's account so the balance deducts immediately
-  if (payload.payerAccountId) {
-    const receiverName = payload.receiverEmail.split('@')[0]
-    const { data: expense, error: expErr } = await supabase
-      .from('expenses')
-      .insert({
-        user_id:    user.id,
-        amount:     payload.amount,
-        category:   'Settlement',
-        note:       `Settlement to ${receiverName}`,
-        account_id: payload.payerAccountId,
-      })
-      .select()
-      .single()
-    if (expErr) throw expErr
-
-    await supabase
-      .from('shared_expense_settlements')
-      .update({ expense_id: expense.id })
-      .eq('id', settlement.id)
-
-    return { ...settlement, expense_id: expense.id }
-  }
-
   return settlement
 }
 
 export async function confirmSettlement(
   settlementId: string,
   receiverAccountId?: string | null,
+  amount?: number | null,
 ): Promise<void> {
   const supabase = createClient()
   const { error } = await supabase.rpc('confirm_settlement', {
     p_settlement_id:      settlementId,
     p_receiver_account_id: receiverAccountId ?? null,
+    p_amount: amount ?? null,
   })
   if (error) throw new Error(error.message)
 }
@@ -91,6 +68,14 @@ export async function rejectSettlement(settlementId: string): Promise<void> {
 export async function recallSettlement(settlementId: string): Promise<void> {
   const supabase = createClient()
   const { error } = await supabase.rpc('recall_settlement', {
+    p_settlement_id: settlementId,
+  })
+  if (error) throw new Error(error.message)
+}
+
+export async function undoConfirmSettlement(settlementId: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.rpc('undo_confirm_settlement', {
     p_settlement_id: settlementId,
   })
   if (error) throw new Error(error.message)

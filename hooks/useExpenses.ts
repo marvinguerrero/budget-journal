@@ -32,8 +32,8 @@ export function useExpenses(month?: number, year?: number) {
   const handleAddExpense = async (formData: ExpenseFormData) => {
     try {
       const newExpense = await createExpense(formData)
-      addExpense(newExpense)
-      toast.success('Expense added!')
+      if (newExpense) addExpense(newExpense)
+      toast.success(formData.obligation_type === 'i_owe' ? 'Payable added!' : 'Expense added!')
       return newExpense
     } catch {
       toast.error('Failed to add expense')
@@ -44,8 +44,13 @@ export function useExpenses(month?: number, year?: number) {
   const handleUpdateExpense = async (id: string, formData: Partial<ExpenseFormData>) => {
     try {
       const updated = await updateExpense(id, formData)
-      updateStore(id, updated)
-      toast.success('Expense updated!')
+      if (updated) {
+        updateStore(id, updated)
+        toast.success('Expense updated!')
+      } else {
+        removeExpense(id)
+        toast.success('Payable added!')
+      }
       return updated
     } catch {
       toast.error('Failed to update expense')

@@ -42,6 +42,16 @@ export type AccountDetailEntry =
       direction: 'in' | 'out'
       otherAccount: FinancialAccount
     }
+  | {
+      kind: 'personal_settlement'
+      id: string
+      date: string
+      amount: number
+      note: string
+      direction: 'in' | 'out'
+      contactName: string
+      status: 'pending_confirmation' | 'confirmed'
+    }
 
 export function useAccountDetail(accountId: string) {
   const [account, setAccount] = useState<FinancialAccount | null>(null)
@@ -62,6 +72,8 @@ export function useAccountDetail(accountId: string) {
         { data: incomes,        error: incErr },
         { data: transfersOut,   error: tfoErr },
         { data: transfersIn,    error: tfiErr },
+        { data: personalPaid,   error: pspErr },
+        { data: personalRecv,   error: psrErr },
       ] = await Promise.all([
         supabase.from('financial_accounts').select('*').eq('id', accountId).single(),
         supabase.from('financial_accounts').select('*'),
@@ -77,6 +89,16 @@ export function useAccountDetail(accountId: string) {
           .eq('status', 'received'),
         supabase.from('account_transfers').select('*').eq('from_account_id', accountId),
         supabase.from('account_transfers').select('*').eq('to_account_id', accountId),
+        supabase
+          .from('personal_obligation_settlements')
+          .select('*, personal_obligations(contact_name)')
+          .eq('payer_account_id', accountId)
+          .in('status', ['pending_confirmation', 'confirmed']),
+        supabase
+          .from('personal_obligation_settlements')
+          .select('*, personal_obligations(contact_name)')
+          .eq('receiver_account_id', accountId)
+          .eq('status', 'confirmed'),
       ])
 
       if (accErr) throw accErr
@@ -85,6 +107,8 @@ export function useAccountDetail(accountId: string) {
       if (incErr) throw incErr
       if (tfoErr) throw tfoErr
       if (tfiErr) throw tfiErr
+      if (pspErr) throw pspErr
+      if (psrErr) throw psrErr
 
       setAccount(acc)
 
@@ -137,6 +161,34 @@ export function useAccountDetail(accountId: string) {
         result.push({ kind: 'transfer', id: t.id, date: t.transferred_at, amount: t.amount, note: t.note, direction: 'in', otherAccount })
       }
 
+      for (const s of personalPaid ?? []) {
+        const obligation = s.personal_obligations as { contact_name: string } | null
+        result.push({
+          kind: 'personal_settlement',
+          id: s.id,
+          date: s.created_at,
+          amount: s.amount,
+          note: s.note,
+          direction: 'out',
+          contactName: obligation?.contact_name ?? 'Contact',
+          status: s.status,
+        })
+      }
+
+      for (const s of personalRecv ?? []) {
+        const obligation = s.personal_obligations as { contact_name: string } | null
+        result.push({
+          kind: 'personal_settlement',
+          id: s.id,
+          date: s.created_at,
+          amount: s.amount,
+          note: s.note,
+          direction: 'in',
+          contactName: obligation?.contact_name ?? 'Contact',
+          status: s.status,
+        })
+      }
+
       result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       setEntries(result)
     } catch {
@@ -150,13 +202,13 @@ export function useAccountDetail(accountId: string) {
 
   const moneyIn = useMemo(() =>
     entries.reduce((s, e) =>
-      (e.kind === 'income' || (e.kind === 'transfer' && e.direction === 'in')) ? s + e.amount : s, 0),
+      (e.kind === 'income' || (e.kind === 'transfer' && e.direction === 'in') || (e.kind === 'personal_settlement' && e.direction === 'in')) ? s + e.amount : s, 0),
     [entries]
   )
 
   const moneyOut = useMemo(() =>
     entries.reduce((s, e) =>
-      (e.kind === 'expense' || e.kind === 'shared_expense' || (e.kind === 'transfer' && e.direction === 'out')) ? s + e.amount : s, 0),
+      (e.kind === 'expense' || e.kind === 'shared_expense' || (e.kind === 'transfer' && e.direction === 'out') || (e.kind === 'personal_settlement' && e.direction === 'out')) ? s + e.amount : s, 0),
     [entries]
   )
 

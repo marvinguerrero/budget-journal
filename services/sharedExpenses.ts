@@ -118,6 +118,8 @@ export async function confirmPaymentSource(
 
 export async function deleteSharedExpense(id: string): Promise<void> {
   const supabase = createClient()
-  const { error } = await supabase.from('shared_expenses').delete().eq('id', id)
-  if (error) throw error
+  const { error } = await supabase.rpc('delete_shared_expense_consistent', {
+    p_expense_id: id,
+  })
+  if (error) throw new Error(error.message)
 }

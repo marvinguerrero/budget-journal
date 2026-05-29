@@ -20,7 +20,6 @@ import { ExpenseForm } from './ExpenseForm'
 import { BottomSheet } from '@/components/common/BottomSheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { FinancialAccount } from '@/types'
 
 interface ExpenseItemProps {
@@ -36,6 +35,7 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
   const icon = CATEGORY_ICONS[expense.category] || '📦'
   const color = CATEGORY_COLORS[expense.category] || '#6B7280'
   const account = expense.account_id ? accounts.find((a) => a.id === expense.account_id) : null
+  const obligation = expense.personal_obligations?.find((o) => o.direction === 'owed_to_user')
 
   const handleUpdate = async (data: ExpenseFormData) => {
     await onUpdate(expense.id, data)
@@ -108,6 +108,11 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
               note: expense.note,
               account_id: expense.account_id,
               created_at: expense.created_at,
+              obligation_type: obligation ? 'owe_me' : 'normal',
+              contact_id: obligation?.contact_id,
+              contact_user_id: obligation?.contact_user_id,
+              contact_name: obligation?.contact_name,
+              contact_email: obligation?.contact_email,
             }}
             isEditing
           />
@@ -121,14 +126,19 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
             <ExpenseForm
               onSubmit={handleUpdate}
               onCancel={() => setEditOpen(false)}
-              initialData={{
-                amount: expense.amount,
-                category: expense.category,
-                note: expense.note,
-                account_id: expense.account_id,
-                created_at: expense.created_at,
-              }}
-              isEditing
+            initialData={{
+              amount: expense.amount,
+              category: expense.category,
+              note: expense.note,
+              account_id: expense.account_id,
+              created_at: expense.created_at,
+              obligation_type: obligation ? 'owe_me' : 'normal',
+              contact_id: obligation?.contact_id,
+              contact_user_id: obligation?.contact_user_id,
+              contact_name: obligation?.contact_name,
+              contact_email: obligation?.contact_email,
+            }}
+            isEditing
             />
           </DialogContent>
         </Dialog>

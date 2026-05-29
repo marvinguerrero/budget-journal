@@ -34,6 +34,30 @@ export type ActivityEntry =
       fromAccount: FinancialAccount
       toAccount: FinancialAccount
     }
+  | {
+      kind: 'personal_settlement'
+      id: string
+      date: string
+      amount: number
+      note: string
+      direction: 'in' | 'out'
+      contactName: string
+      account: FinancialAccount
+      status: 'pending_confirmation' | 'confirmed'
+    }
+  | {
+      kind: 'settlement_history'
+      id: string
+      date: string
+      amount: number
+      note: string
+      event: 'confirmed' | 'reversed'
+      direction: 'in' | 'out'
+      counterpartyName: string
+      account: FinancialAccount
+      fromLabel?: string | null
+      toLabel?: string | null
+    }
 
 export function useAccountActivity(month?: number, year?: number) {
   const [entries, setEntries] = useState<ActivityEntry[]>([])
@@ -67,6 +91,8 @@ export function useAccountActivity(month?: number, year?: number) {
         { data: expenses,  error: expErr },
         { data: incomes,   error: incErr },
         { data: transfers, error: tfrErr },
+        { data: personalSettlements, error: psErr },
+        { data: sharedSettlements, error: ssErr },
       ] = await Promise.all([
         withDates(
           supabase.from('expenses').select('*').not('account_id', 'is', null),
@@ -84,11 +110,26 @@ export function useAccountActivity(month?: number, year?: number) {
           supabase.from('account_transfers').select('*'),
           'transferred_at',
         ),
+        withDates(
+          supabase
+            .from('personal_obligation_settlements')
+            .select('*, personal_obligations(contact_name)')
+            .in('status', ['pending_confirmation', 'confirmed'])
+            .or('payer_account_id.not.is.null,receiver_account_id.not.is.null'),
+          'created_at',
+        ),
+        supabase
+          .from('shared_expense_settlements')
+          .select('*')
+          .or('payer_account_id.not.is.null,receiver_account_id.not.is.null')
+          .or('confirmed_at.not.is.null,confirmation_reversed_at.not.is.null'),
       ])
 
       if (expErr) throw expErr
       if (incErr) throw incErr
       if (tfrErr) throw tfrErr
+      if (psErr) throw psErr
+      if (ssErr) throw ssErr
 
       const result: ActivityEntry[] = []
 
@@ -119,6 +160,88 @@ export function useAccountActivity(month?: number, year?: number) {
         const toAccount   = accMap.get(t.to_account_id)
         if (!fromAccount || !toAccount) continue
         result.push({ kind: 'transfer', id: t.id, date: t.transferred_at, amount: t.amount, note: t.note, fromAccount, toAccount })
+      }
+
+      for (const s of personalSettlements ?? []) {
+        const accountId = s.payer_account_id ?? s.receiver_account_id
+        const account = accountId ? accMap.get(accountId) : null
+        if (!account) continue
+        const obligation = s.personal_obligations as { contact_name: string } | null
+        result.push({
+          kind: 'personal_settlement',
+          id: s.id,
+          date: s.created_at,
+          amount: s.amount,
+          note: s.note,
+          direction: s.payer_account_id ? 'out' : 'in',
+          contactName: obligation?.contact_name ?? 'Contact',
+          account,
+          status: s.status,
+        })
+        if (s.confirmed_at) {
+          result.push({
+            kind: 'settlement_history',
+            id: `${s.id}-confirmed`,
+            date: s.confirmed_at,
+            amount: s.amount,
+            note: s.note,
+            event: 'confirmed',
+            direction: s.payer_account_id ? 'out' : 'in',
+            counterpartyName: obligation?.contact_name ?? 'Contact',
+            account,
+            fromLabel: s.payer_account_id ? `${account.emoji} ${account.name}` : obligation?.contact_name ?? 'Contact',
+            toLabel: s.receiver_account_id ? `${account.emoji} ${account.name}` : obligation?.contact_name ?? 'Contact',
+          })
+        }
+        if (s.confirmation_reversed_at) {
+          result.push({
+            kind: 'settlement_history',
+            id: `${s.id}-reversed`,
+            date: s.confirmation_reversed_at,
+            amount: s.amount,
+            note: s.note,
+            event: 'reversed',
+            direction: s.payer_account_id ? 'out' : 'in',
+            counterpartyName: obligation?.contact_name ?? 'Contact',
+            account,
+            fromLabel: s.payer_account_id ? `${account.emoji} ${account.name}` : obligation?.contact_name ?? 'Contact',
+            toLabel: s.receiver_account_id ? `${account.emoji} ${account.name}` : obligation?.contact_name ?? 'Contact',
+          })
+        }
+      }
+
+      for (const s of sharedSettlements ?? []) {
+        const payerAccount = s.payer_account_id ? accMap.get(s.payer_account_id) : null
+        const receiverAccount = s.receiver_account_id ? accMap.get(s.receiver_account_id) : null
+        const fromLabel = s.payer_account_label ?? (payerAccount ? `${payerAccount.emoji} ${payerAccount.name}` : null)
+        const toLabel = s.receiver_account_label ?? (receiverAccount ? `${receiverAccount.emoji} ${receiverAccount.name}` : null)
+
+        const pushHistory = (account: FinancialAccount, direction: 'in' | 'out', event: 'confirmed' | 'reversed', date: string) => {
+          result.push({
+            kind: 'settlement_history',
+            id: `${s.id}-shared-${direction}-${event}`,
+            date,
+            amount: s.amount,
+            note: s.note,
+            event,
+            direction,
+            counterpartyName: direction === 'out'
+              ? s.receiver_email?.split('@')[0] ?? 'Receiver'
+              : s.payer_email?.split('@')[0] ?? 'Payer',
+            account,
+            fromLabel,
+            toLabel,
+          })
+        }
+
+        if (s.confirmed_at) {
+          if (payerAccount) pushHistory(payerAccount, 'out', 'confirmed', s.confirmed_at)
+          if (receiverAccount) pushHistory(receiverAccount, 'in', 'confirmed', s.confirmed_at)
+        }
+        if (s.confirmation_reversed_at) {
+          if (payerAccount) pushHistory(payerAccount, 'out', 'reversed', s.confirmation_reversed_at)
+          if (receiverAccount) pushHistory(receiverAccount, 'in', 'reversed', s.confirmation_reversed_at)
+        }
       }
 
       result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
