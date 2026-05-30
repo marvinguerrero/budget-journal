@@ -77,6 +77,9 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
         contact_email: isObligation ? selectedContact?.email ?? null : undefined,
         contact_user_id: isObligation ? selectedContact?.linked_user_id ?? null : undefined,
       })
+    } catch {
+      // Submit handlers show the specific toast; keep the form open without
+      // bubbling validation failures into the Next.js runtime overlay.
     } finally {
       setIsSubmitting(false)
     }
