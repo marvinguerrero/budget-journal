@@ -17,8 +17,8 @@ interface Props {
 
 export function SharedBudgetProgress({ budget, expenses, canDelete, onEdit, onDelete }: Props) {
   const spent = useMemo(
-    () => expenses.filter((e) => e.category === budget.category).reduce((s, e) => s + e.amount, 0),
-    [expenses, budget.category]
+    () => expenses.filter((e) => e.shared_budget_id === budget.id).reduce((s, e) => s + e.amount, 0),
+    [expenses, budget.id]
   )
 
   const percentage = budget.amount > 0 ? Math.min((spent / budget.amount) * 100, 100) : 0
@@ -48,6 +48,7 @@ export function SharedBudgetProgress({ budget, expenses, canDelete, onEdit, onDe
           </div>
           <div>
             <p className="font-semibold text-sm">{budget.category}</p>
+            <p className="text-xs font-medium text-foreground">{budget.item}</p>
             <p className="text-xs text-muted-foreground">
               {formatCurrency(spent)} of {formatCurrency(budget.amount)}
             </p>

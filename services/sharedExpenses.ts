@@ -9,7 +9,8 @@ export interface SplitInput {
 
 export async function createSharedExpense(
   groupId: string,
-  category: string,
+  sharedBudgetId: string,
+  _category: string,
   amount: number,
   note: string,
   paidByUserId: string,
@@ -17,50 +18,108 @@ export async function createSharedExpense(
   splitMode: SplitMode,
   splits: SplitInput[],
   accountId?: string | null,
-  paymentSourceStatus?: PaymentSourceStatus,
+  _paymentSourceStatus?: PaymentSourceStatus,
 ): Promise<{ expense: SharedExpense; splits: SharedExpenseSplit[] }> {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
   if (paidByUserId === user.id && !accountId) throw new Error('Please select a source account.')
+  if (!sharedBudgetId) throw new Error('Please select a budget item.')
 
-  const { data: expense, error } = await supabase
-    .from('shared_expenses')
-    .insert({
-      group_id:              groupId,
-      user_id:               user.id,
-      user_email:            user.email ?? '',
-      category:              category.trim(),
-      amount,
-      note:                  note.trim(),
-      paid_by_user_id:       paidByUserId,
-      paid_by_email:         paidByEmail,
-      split_mode:            splitMode,
-      account_id:            accountId ?? null,
-      payment_source_status: paymentSourceStatus ?? 'confirmed',
-    })
-    .select()
+  const { data: budget, error: budgetErr } = await supabase
+    .from('shared_budgets')
+    .select('id, group_id, category, item')
+    .eq('id', sharedBudgetId)
+    .eq('group_id', groupId)
     .single()
-  if (error) throw error
 
-  if (splits.length === 0) return { expense, splits: [] }
+  if (budgetErr) throw new Error('Budget item not found')
 
-  const { data: insertedSplits, error: splitErr } = await supabase
-    .from('shared_expense_splits')
-    .insert(splits.map((s) => ({
-      expense_id:     expense.id,
-      debtor_user_id: s.user_id,
-      debtor_email:   s.email,
-      amount:         s.amount,
-    })))
-    .select()
-  if (splitErr) throw splitErr
+  let canonicalExpenseId: string | null = null
+  let sharedExpenseId: string | null = null
+  const nextPaymentSourceStatus: PaymentSourceStatus = paidByUserId === user.id ? 'confirmed' : 'pending'
 
-  return { expense, splits: insertedSplits ?? [] }
+  try {
+    if (paidByUserId === user.id) {
+      const { data: canonicalExpense, error: canonicalErr } = await supabase
+        .from('expenses')
+        .insert({
+          user_id: user.id,
+          amount,
+          category: budget.category,
+          note: note.trim(),
+          account_id: accountId,
+          created_at: new Date().toISOString(),
+          shared_group_id: groupId,
+          shared_budget_id: sharedBudgetId,
+          shared_budget_item: budget.item,
+          is_shared_budget_expense: true,
+        })
+        .select('id')
+        .single()
+
+      if (canonicalErr) throw canonicalErr
+      canonicalExpenseId = canonicalExpense.id
+    }
+
+    const { data: expense, error } = await supabase
+      .from('shared_expenses')
+      .insert({
+        group_id:              groupId,
+        shared_budget_id:      sharedBudgetId,
+        user_id:               user.id,
+        user_email:            user.email ?? '',
+        category:              budget.category,
+        amount,
+        note:                  note.trim(),
+        paid_by_user_id:       paidByUserId,
+        paid_by_email:         paidByEmail,
+        split_mode:            splitMode,
+        account_id:            paidByUserId === user.id ? accountId ?? null : null,
+        payment_source_status: nextPaymentSourceStatus,
+        expense_id:            canonicalExpenseId,
+      })
+      .select()
+      .single()
+    if (error) throw error
+    sharedExpenseId = expense.id
+
+    if (canonicalExpenseId) {
+      const { error: linkErr } = await supabase
+        .from('expenses')
+        .update({ shared_expense_id: expense.id })
+        .eq('id', canonicalExpenseId)
+      if (linkErr) throw linkErr
+    }
+
+    if (splits.length === 0) return { expense, splits: [] }
+
+    const { data: insertedSplits, error: splitErr } = await supabase
+      .from('shared_expense_splits')
+      .insert(splits.map((s) => ({
+        expense_id:     expense.id,
+        debtor_user_id: s.user_id,
+        debtor_email:   s.email,
+        amount:         s.amount,
+      })))
+      .select()
+    if (splitErr) throw splitErr
+
+    return { expense, splits: insertedSplits ?? [] }
+  } catch (err) {
+    if (sharedExpenseId) {
+      await supabase.from('shared_expenses').delete().eq('id', sharedExpenseId)
+    }
+    if (canonicalExpenseId) {
+      await supabase.from('expenses').delete().eq('id', canonicalExpenseId)
+    }
+    throw err
+  }
 }
 
 export async function updateSharedExpense(
   id: string,
+  sharedBudgetId: string,
   category: string,
   amount: number,
   note: string,
@@ -72,6 +131,7 @@ export async function updateSharedExpense(
   paymentSourceStatus?: PaymentSourceStatus,
 ): Promise<SharedExpenseSplit[]> {
   const supabase = createClient()
+  if (!sharedBudgetId) throw new Error('Please select a budget item.')
 
   const { error } = await supabase.rpc('update_shared_expense', {
     p_expense_id:            id,
@@ -83,6 +143,7 @@ export async function updateSharedExpense(
     p_split_mode:            splitMode,
     p_account_id:            accountId ?? null,
     p_payment_source_status: paymentSourceStatus ?? 'confirmed',
+    p_shared_budget_id:      sharedBudgetId,
   })
   if (error) throw new Error(error.message)
 

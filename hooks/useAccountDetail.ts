@@ -81,7 +81,8 @@ export function useAccountDetail(accountId: string) {
         supabase
           .from('shared_expenses')
           .select('*, shared_groups(name, emoji)')
-          .eq('account_id', accountId),
+          .eq('account_id', accountId)
+          .is('expense_id', null),
         supabase
           .from('income_entries')
           .select('*, income_sources(name, emoji)')

@@ -16,7 +16,9 @@ export function exportExpensesToExcel(expenses: Expense[], options: ExportOption
     return {
       Date: date.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }),
       Category: e.category,
+      Item: e.shared_budget_item ?? '',
       Note: e.note || '',
+      Source: e.is_shared_budget_expense ? 'Shared Budget' : 'Personal',
       Amount: e.amount,
     }
   })
@@ -25,7 +27,9 @@ export function exportExpensesToExcel(expenses: Expense[], options: ExportOption
   rows.push({
     Date: '',
     Category: '',
+    Item: '',
     Note: 'TOTAL',
+    Source: '',
     Amount: total,
   })
 
@@ -34,7 +38,9 @@ export function exportExpensesToExcel(expenses: Expense[], options: ExportOption
   ws['!cols'] = [
     { wch: 16 },
     { wch: 16 },
+    { wch: 18 },
     { wch: 28 },
+    { wch: 16 },
     { wch: 12 },
   ]
 

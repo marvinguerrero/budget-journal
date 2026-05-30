@@ -36,6 +36,7 @@ export interface SharedBudget {
   id: string
   group_id: string
   category: string
+  item: string
   amount: number
   created_at: string
 }
@@ -265,6 +266,8 @@ export type PaymentSourceStatus = 'pending' | 'confirmed'
 export interface SharedExpense {
   id: string
   group_id: string
+  shared_budget_id: string | null
+  expense_id: string | null
   user_id: string
   user_email: string
   category: string
@@ -294,6 +297,11 @@ export interface Expense {
   category: string
   note: string
   account_id?: string | null
+  shared_expense_id?: string | null
+  shared_group_id?: string | null
+  shared_budget_id?: string | null
+  shared_budget_item?: string | null
+  is_shared_budget_expense?: boolean
   credit_billing_cycle_start?: string | null
   credit_billing_cycle_end?: string | null
   credit_statement_date?: string | null

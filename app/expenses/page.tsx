@@ -83,7 +83,8 @@ export default function ExpensesPage() {
       const matchesSearch =
         !search ||
         e.note.toLowerCase().includes(search.toLowerCase()) ||
-        e.category.toLowerCase().includes(search.toLowerCase())
+        e.category.toLowerCase().includes(search.toLowerCase()) ||
+        (e.shared_budget_item ?? '').toLowerCase().includes(search.toLowerCase())
       const matchesCategory = categoryFilter === 'all' || e.category === categoryFilter
       const matchesAccount = accountFilter === 'all' || (e.account_id ?? '') === accountFilter
       const expAccount = e.account_id ? accountMap.get(e.account_id) : null

@@ -334,10 +334,12 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const [expenseIncluded,    setExpenseIncluded]    = useState<Record<string, boolean>>({})
   const [expenseCustomAmts,  setExpenseCustomAmts]  = useState<Record<string, string>>({})
   const [expenseAccountId,   setExpenseAccountId]   = useState('')
+  const [expenseBudgetId,    setExpenseBudgetId]    = useState('')
 
   // ── Edit expense form ──────────────────────────────────────────
   const [editingExpense,         setEditingExpense]         = useState<SharedExpense | null>(null)
   const [editExpenseCategory,    setEditExpenseCategory]    = useState('')
+  const [editExpenseBudgetId,    setEditExpenseBudgetId]    = useState('')
   const [editExpenseAmount,      setEditExpenseAmount]      = useState('')
   const [editExpenseNote,        setEditExpenseNote]        = useState('')
   const [editExpensePaidById,    setEditExpensePaidById]    = useState(currentUserId)
@@ -349,8 +351,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
 
   // ── Budget form ────────────────────────────────────────────────
   const [budgetCategory, setBudgetCategory] = useState('')
+  const [budgetItem,     setBudgetItem]     = useState('')
   const [budgetAmount,   setBudgetAmount]   = useState('')
   const [editingBudget,  setEditingBudget]  = useState<SharedBudget | null>(null)
+  const [editBudgetItem, setEditBudgetItem] = useState('')
   const [editBudgetAmount, setEditBudgetAmount] = useState('')
 
   // ── Invite form ────────────────────────────────────────────────
@@ -443,9 +447,14 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const totalBudget    = useMemo(() => budgets.reduce((s, b) => s + b.amount, 0), [budgets])
   const totalSpent     = useMemo(() => expenses.reduce((s, e) => s + e.amount, 0), [expenses])
   const totalRemaining = totalBudget - totalSpent
-
-  const coveredCategories        = new Set(budgets.map((b) => b.category))
-  const availableBudgetCategories = DEFAULT_CATEGORIES.filter((c) => !coveredCategories.has(c.name))
+  const expenseBudgetOptions = useMemo(() =>
+    budgets.filter((budget) => budget.category === expenseCategory),
+    [budgets, expenseCategory]
+  )
+  const editExpenseBudgetOptions = useMemo(() =>
+    budgets.filter((budget) => budget.category === editExpenseCategory),
+    [budgets, editExpenseCategory]
+  )
 
   // ── load ───────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -474,6 +483,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     e.preventDefault()
     const amt = parseFloat(expenseAmount)
     if (!amt || amt <= 0) return
+    if (!expenseBudgetId) {
+      toast.error('Please select a budget item.')
+      return
+    }
 
     if (expenseSplitMode === 'custom') {
       const total = allParticipants.reduce((s, p) => s + (parseFloat(expenseCustomAmts[p.user_id] || '0') || 0), 0)
@@ -491,7 +504,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     try {
       const computedSplits = computeSplits(expenseSplitMode, allParticipants, expenseIncluded, expenseCustomAmts, amt)
       const { expense, splits: newSplits } = await createSharedExpense(
-        groupId, expenseCategory, amt, expenseNote,
+        groupId, expenseBudgetId, expenseCategory, amt, expenseNote,
         expensePaidById, expensePaidByEmail, expenseSplitMode, computedSplits,
         expensePaidById === currentUserId ? (expenseAccountId || null) : null,
         expensePaidById === currentUserId ? 'confirmed' : 'pending',
@@ -517,6 +530,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     setExpenseIncluded({})
     setExpenseCustomAmts({})
     setExpenseAccountId('')
+    setExpenseBudgetId('')
   }
 
   const handleDeleteExpense = async (id: string) => {
@@ -533,6 +547,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const openEditExpense = (expense: SharedExpense) => {
     setEditingExpense(expense)
     setEditExpenseCategory(expense.category)
+    setEditExpenseBudgetId(expense.shared_budget_id ?? '')
     setEditExpenseAmount(String(expense.amount))
     setEditExpenseNote(expense.note)
 
@@ -566,6 +581,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     if (!editingExpense) return
     const amt = parseFloat(editExpenseAmount)
     if (!amt || amt <= 0) return
+    if (!editExpenseBudgetId) {
+      toast.error('Please select a budget item.')
+      return
+    }
 
     if (editExpenseSplitMode === 'custom') {
       const total = allParticipants.reduce((s, p) => s + (parseFloat(editExpenseCustomAmts[p.user_id] || '0') || 0), 0)
@@ -574,30 +593,22 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         return
       }
     }
+    if (editExpensePaidById === currentUserId && !editExpenseAccountId) {
+      toast.error('Please select a source account.')
+      return
+    }
 
     setIsSaving(true)
     try {
       const computedSplits = computeSplits(editExpenseSplitMode, allParticipants, editExpenseIncluded, editExpenseCustomAmts, amt)
       const newSplits = await updateSharedExpense(
-        editingExpense.id, editExpenseCategory, amt, editExpenseNote,
+        editingExpense.id, editExpenseBudgetId, editExpenseCategory, amt, editExpenseNote,
         editExpensePaidById, editExpensePaidByEmail, editExpenseSplitMode, computedSplits,
         editExpensePaidById === currentUserId ? (editExpenseAccountId || null) : null,
         editExpensePaidById === currentUserId ? 'confirmed' : 'pending',
       )
-      const newStatus: PaymentSourceStatus = editExpensePaidById === currentUserId ? 'confirmed' : 'pending'
-      const newAccountId = editExpensePaidById === currentUserId ? (editExpenseAccountId || null) : null
-      setExpenses((prev) =>
-        prev.map((ex) =>
-          ex.id === editingExpense.id
-            ? { ...ex, category: editExpenseCategory, amount: amt, note: editExpenseNote,
-                paid_by_user_id: editExpensePaidById, paid_by_email: editExpensePaidByEmail,
-                split_mode: editExpenseSplitMode,
-                account_id: newAccountId,
-                payment_source_status: newStatus }
-            : ex
-        )
-      )
       setSplits((prev) => [...prev.filter((s) => s.expense_id !== editingExpense.id), ...newSplits])
+      await load()
       setEditingExpense(null)
       toast.success('Expense updated')
     } catch (err) {
@@ -611,16 +622,17 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const handleAddBudget = async (e: React.FormEvent) => {
     e.preventDefault()
     const amt = parseFloat(budgetAmount)
-    if (!budgetCategory || !amt || amt <= 0) return
+    if (!budgetCategory || !budgetItem.trim() || !amt || amt <= 0) return
     setIsSaving(true)
     try {
-      const bud = await createSharedBudget(groupId, budgetCategory, amt)
+      const bud = await createSharedBudget(groupId, budgetCategory, budgetItem, amt)
       setBudgets((prev) => {
         const exists = prev.findIndex((b) => b.id === bud.id)
         return exists >= 0 ? prev.map((b) => (b.id === bud.id ? bud : b)) : [...prev, bud]
       })
       setShowAddBudget(false)
       setBudgetCategory('')
+      setBudgetItem('')
       setBudgetAmount('')
       toast.success('Budget set!')
     } catch {
@@ -642,6 +654,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
 
   const openEditBudget = (budget: SharedBudget) => {
     setEditingBudget(budget)
+    setEditBudgetItem(budget.item)
     setEditBudgetAmount(String(budget.amount))
   }
 
@@ -649,11 +662,11 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     e.preventDefault()
     if (!editingBudget) return
     const amt = parseFloat(editBudgetAmount)
-    if (!amt || amt <= 0) return
+    if (!editBudgetItem.trim() || !amt || amt <= 0) return
     setIsSaving(true)
     try {
-      await updateSharedBudget(editingBudget.id, amt)
-      setBudgets((prev) => prev.map((b) => (b.id === editingBudget.id ? { ...b, amount: amt } : b)))
+      await updateSharedBudget(editingBudget.id, amt, editBudgetItem)
+      setBudgets((prev) => prev.map((b) => (b.id === editingBudget.id ? { ...b, item: editBudgetItem.trim(), amount: amt } : b)))
       setEditingBudget(null)
       toast.success('Budget updated')
     } catch (err) {
@@ -915,13 +928,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     setIsSavingPaymentSource(true)
     try {
       await confirmPaymentSource(confirmingPaymentSource.id, paymentSourceAccountId || null)
-      setExpenses((prev) =>
-        prev.map((ex) =>
-          ex.id === confirmingPaymentSource.id
-            ? { ...ex, payment_source_status: 'confirmed' as const, account_id: paymentSourceAccountId || null }
-            : ex
-        )
-      )
+      await load()
       setConfirmingPaymentSource(null)
       setPaymentSourceAccountId('')
       toast.success('Payment source confirmed')
@@ -944,7 +951,11 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     <form onSubmit={handleAddExpense} className="space-y-4">
       <div className="space-y-2">
         <Label className="text-sm font-semibold">Category</Label>
-        <Select value={expenseCategory} onValueChange={(v: string | null) => v && setExpenseCategory(v)}>
+        <Select value={expenseCategory} onValueChange={(v: string | null) => {
+          if (!v) return
+          setExpenseCategory(v)
+          setExpenseBudgetId('')
+        }}>
           <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
           <SelectContent>
             {DEFAULT_CATEGORIES.map((cat) => (
@@ -952,6 +963,24 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
             ))}
           </SelectContent>
         </Select>
+      </div>
+      <div className="space-y-2">
+        <Label className="text-sm font-semibold">Item</Label>
+        <Select value={expenseBudgetId} onValueChange={(v: string | null) => v && setExpenseBudgetId(v)}>
+          <SelectTrigger className="h-11 rounded-xl">
+            <SelectValue placeholder={expenseBudgetOptions.length === 0 ? 'Create a budget item first' : 'Pick an item'} />
+          </SelectTrigger>
+          <SelectContent>
+            {expenseBudgetOptions.map((budget) => (
+              <SelectItem key={budget.id} value={budget.id}>
+                {budget.item} · {formatCurrency(budget.amount)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {expenseBudgetOptions.length === 0 && (
+          <p className="text-xs text-muted-foreground">Add a budget item for this category before recording an expense.</p>
+        )}
       </div>
       <div className="space-y-2">
         <Label className="text-sm font-semibold">Amount (₱)</Label>
@@ -1011,7 +1040,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         <Button
           type="submit"
           className="flex-1 h-11 rounded-xl font-semibold"
-          disabled={isSaving || !isAddCustomValid || (expensePaidById === currentUserId && !expenseAccountId)}
+          disabled={isSaving || !isAddCustomValid || !expenseBudgetId || (expensePaidById === currentUserId && !expenseAccountId)}
         >
           {isSaving ? 'Adding…' : 'Add Expense'}
         </Button>
@@ -1160,7 +1189,6 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                   type="button" size="sm" variant="outline"
                   className="h-8 rounded-xl text-xs gap-1.5"
                   onClick={() => setShowAddBudget(true)}
-                  disabled={availableBudgetCategories.length === 0}
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add
@@ -1418,7 +1446,17 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       )}
 
       {/* ── Add Budget dialog ── */}
-      <Dialog open={showAddBudget} onOpenChange={setShowAddBudget}>
+      <Dialog
+        open={showAddBudget}
+        onOpenChange={(open) => {
+          setShowAddBudget(open)
+          if (!open) {
+            setBudgetCategory('')
+            setBudgetItem('')
+            setBudgetAmount('')
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-sm rounded-2xl">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Set Budget</DialogTitle>
@@ -1431,11 +1469,21 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                   <SelectValue placeholder="Pick a category" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(availableBudgetCategories.length > 0 ? availableBudgetCategories : DEFAULT_CATEGORIES).map((cat) => (
+                  {DEFAULT_CATEGORIES.map((cat) => (
                     <SelectItem key={cat.name} value={cat.name}>{cat.icon} {cat.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Item</Label>
+              <Input
+                placeholder="e.g. Dinner"
+                value={budgetItem}
+                onChange={(e) => setBudgetItem(e.target.value)}
+                className="h-11 rounded-xl"
+                required
+              />
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold">Budget Amount (₱)</Label>
@@ -1450,7 +1498,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
             </div>
             <div className="flex gap-3">
               <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setShowAddBudget(false)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>{isSaving ? 'Saving…' : 'Set Budget'}</Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving || !budgetCategory || !budgetItem.trim()}>{isSaving ? 'Saving…' : 'Set Budget'}</Button>
             </div>
           </form>
         </DialogContent>
@@ -1465,11 +1513,30 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
           <form onSubmit={handleSaveExpense} className="space-y-4">
             <div className="space-y-2">
               <Label className="text-sm font-semibold">Category</Label>
-              <Select value={editExpenseCategory} onValueChange={(v: string | null) => v && setEditExpenseCategory(v)}>
+              <Select value={editExpenseCategory} onValueChange={(v: string | null) => {
+                if (!v) return
+                setEditExpenseCategory(v)
+                setEditExpenseBudgetId('')
+              }}>
                 <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {DEFAULT_CATEGORIES.map((cat) => (
                     <SelectItem key={cat.name} value={cat.name}>{cat.icon} {cat.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Item</Label>
+              <Select value={editExpenseBudgetId} onValueChange={(v: string | null) => v && setEditExpenseBudgetId(v)}>
+                <SelectTrigger className="h-11 rounded-xl">
+                  <SelectValue placeholder={editExpenseBudgetOptions.length === 0 ? 'Create a budget item first' : 'Pick an item'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {editExpenseBudgetOptions.map((budget) => (
+                    <SelectItem key={budget.id} value={budget.id}>
+                      {budget.item} · {formatCurrency(budget.amount)}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1526,7 +1593,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
 
             <div className="flex gap-3 pt-1">
               <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setEditingExpense(null)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving || !isEditCustomValid}>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving || !isEditCustomValid || !editExpenseBudgetId}>
                 {isSaving ? 'Saving…' : 'Save Changes'}
               </Button>
             </div>
@@ -1542,6 +1609,24 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
           </DialogHeader>
           <form onSubmit={handleSaveBudget} className="space-y-4">
             <div className="space-y-2">
+              <Label className="text-sm font-semibold">Category</Label>
+              <Input
+                value={editingBudget?.category ?? ''}
+                className="h-11 rounded-xl"
+                disabled
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Item</Label>
+              <Input
+                placeholder="e.g. Dinner"
+                value={editBudgetItem}
+                onChange={(e) => setEditBudgetItem(e.target.value)}
+                className="h-11 rounded-xl"
+                required
+              />
+            </div>
+            <div className="space-y-2">
               <Label className="text-sm font-semibold">Budget Amount (₱)</Label>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
@@ -1554,7 +1639,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
             </div>
             <div className="flex gap-3">
               <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setEditingBudget(null)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save Changes'}</Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSaving || !editBudgetItem.trim()}>{isSaving ? 'Saving…' : 'Save Changes'}</Button>
             </div>
           </form>
         </DialogContent>
