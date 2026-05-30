@@ -123,6 +123,7 @@ export async function applyPersonalObligationPayment(payload: {
   note?: string
 }): Promise<PersonalObligationSettlement> {
   const supabase = createClient()
+  if (!payload.accountId) throw new Error('Please select a source account.')
   const { data, error } = await supabase.rpc('apply_personal_obligation_payment', {
     p_obligation_id: payload.obligationId,
     p_amount: payload.amount,
@@ -140,6 +141,7 @@ export async function confirmPersonalObligationPayment(
   receiverAccountId?: string | null,
 ): Promise<void> {
   const supabase = createClient()
+  if (!receiverAccountId) throw new Error('Please select a destination account.')
   const { error } = await supabase.rpc('confirm_personal_obligation_payment', {
     p_settlement_id: settlementId,
     p_amount: amount ?? null,
@@ -171,6 +173,7 @@ export async function recordExternalPersonalObligationPayment(payload: {
   note?: string
 }): Promise<PersonalObligationSettlement> {
   const supabase = createClient()
+  if (!payload.accountId) throw new Error('Please select a source account.')
   const { data, error } = await supabase.rpc('record_external_personal_obligation_payment', {
     p_obligation_id: payload.obligationId,
     p_amount: payload.amount,

@@ -23,6 +23,7 @@ export async function createSettlement(payload: {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
+  if (!payload.payerAccountId) throw new Error('Please select a source account.')
 
   const { data: settlement, error: settleErr } = await supabase
     .from('shared_expense_settlements')
@@ -49,6 +50,7 @@ export async function confirmSettlement(
   amount?: number | null,
 ): Promise<void> {
   const supabase = createClient()
+  if (!receiverAccountId) throw new Error('Please select a destination account.')
   const { error } = await supabase.rpc('confirm_settlement', {
     p_settlement_id:      settlementId,
     p_receiver_account_id: receiverAccountId ?? null,

@@ -73,23 +73,26 @@ interface AccountChipsProps {
   value: string
   onChange: (id: string) => void
   noneLabel?: string
+  allowNone?: boolean
 }
 
-function AccountChips({ accounts, value, onChange, noneLabel = 'No account' }: AccountChipsProps) {
+function AccountChips({ accounts, value, onChange, noneLabel = 'No account', allowNone = true }: AccountChipsProps) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      <button
-        type="button"
-        onClick={() => onChange('')}
-        className={cn(
-          'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
-          !value
-            ? 'border-primary bg-primary/10 text-primary'
-            : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
-        )}
-      >
-        {noneLabel}
-      </button>
+      {allowNone && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className={cn(
+            'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+            !value
+              ? 'border-primary bg-primary/10 text-primary'
+              : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
+          )}
+        >
+          {noneLabel}
+        </button>
+      )}
       {accounts.map((acc) => (
         <button
           key={acc.id}
@@ -497,6 +500,10 @@ export function BalancesClient({ userId }: Props) {
   const handleSettle = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!settleTarget) return
+    if (!settleAccountId) {
+      toast.error('Please select a source account.')
+      return
+    }
     setIsSavingSettle(true)
     try {
       await createSettlement({
@@ -513,8 +520,8 @@ export function BalancesClient({ userId }: Props) {
       setSettleAccountId('')
       setSettleNote('')
       toast.success('Payment sent — waiting for confirmation')
-    } catch {
-      toast.error('Failed to send settlement')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send settlement')
     } finally {
       setIsSavingSettle(false)
     }
@@ -543,6 +550,10 @@ export function BalancesClient({ userId }: Props) {
   const handlePersonalSettle = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!personalTarget) return
+    if (!personalAccountId) {
+      toast.error('Please select a source account.')
+      return
+    }
     setIsSavingPersonal(true)
     try {
       const payload = {
@@ -581,6 +592,10 @@ export function BalancesClient({ userId }: Props) {
     }
     if (amount > maxAmount + 0.005) {
       toast.error('Settlement amount cannot exceed the remaining balance')
+      return
+    }
+    if (!reviewAccountId) {
+      toast.error('Please select a destination account.')
       return
     }
 
@@ -1103,13 +1118,13 @@ export function BalancesClient({ userId }: Props) {
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-1.5">
                   <Wallet className="w-3.5 h-3.5" />
-                  Pay from account <span className="text-muted-foreground font-normal">(optional)</span>
+                  Pay from account
                 </Label>
                 <AccountChips
                   accounts={accounts}
                   value={settleAccountId}
                   onChange={setSettleAccountId}
-                  noneLabel="No account"
+                  allowNone={false}
                 />
                 {settleAccountId && (
                   <p className="text-xs text-muted-foreground">
@@ -1139,7 +1154,7 @@ export function BalancesClient({ userId }: Props) {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingSettle}>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingSettle || !settleAccountId}>
                   {isSavingSettle ? 'Sending…' : 'Mark as Paid'}
                 </Button>
               </div>
@@ -1178,13 +1193,13 @@ export function BalancesClient({ userId }: Props) {
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-1.5">
                   <Wallet className="w-3.5 h-3.5" />
-                  {personalTarget.obligation.direction === 'owed_to_user' ? 'Receive into account' : 'Pay from account'} <span className="text-muted-foreground font-normal">(optional)</span>
+                  {personalTarget.obligation.direction === 'owed_to_user' ? 'Receive into account' : 'Pay from account'}
                 </Label>
                 <AccountChips
                   accounts={accounts}
                   value={personalAccountId}
                   onChange={setPersonalAccountId}
-                  noneLabel="No account"
+                  allowNone={false}
                 />
               </div>
 
@@ -1209,7 +1224,7 @@ export function BalancesClient({ userId }: Props) {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingPersonal}>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingPersonal || !personalAccountId}>
                   {isSavingPersonal ? 'Saving…' : personalTarget.obligation.direction === 'owed_to_user' ? 'Record Received' : 'Mark as Paid'}
                 </Button>
               </div>
@@ -1274,13 +1289,13 @@ export function BalancesClient({ userId }: Props) {
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-1.5">
                   <Wallet className="w-3.5 h-3.5" />
-                  Destination account <span className="text-muted-foreground font-normal">(optional)</span>
+                  Destination account
                 </Label>
                 <AccountChips
                   accounts={accounts}
                   value={reviewAccountId}
                   onChange={setReviewAccountId}
-                  noneLabel="No account"
+                  allowNone={false}
                 />
                 {reviewAccountId && (
                   <p className="text-xs text-muted-foreground">
@@ -1368,7 +1383,7 @@ export function BalancesClient({ userId }: Props) {
                 <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={closeReview}>
                   Close
                 </Button>
-                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingReview}>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingReview || !reviewAccountId}>
                   {isSavingReview ? 'Confirming…' : 'Confirm Received'}
                 </Button>
               </div>

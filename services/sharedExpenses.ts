@@ -22,6 +22,7 @@ export async function createSharedExpense(
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
+  if (paidByUserId === user.id && !accountId) throw new Error('Please select a source account.')
 
   const { data: expense, error } = await supabase
     .from('shared_expenses')
@@ -109,6 +110,7 @@ export async function confirmPaymentSource(
   accountId?: string | null,
 ): Promise<void> {
   const supabase = createClient()
+  if (!accountId) throw new Error('Please select a source account.')
   const { error } = await supabase.rpc('confirm_payment_source', {
     p_expense_id: expenseId,
     p_account_id: accountId ?? null,

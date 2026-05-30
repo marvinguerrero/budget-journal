@@ -482,6 +482,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         return
       }
     }
+    if (expensePaidById === currentUserId && !expenseAccountId) {
+      toast.error('Please select a source account.')
+      return
+    }
 
     setIsSaving(true)
     try {
@@ -497,8 +501,8 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       setShowAddExpense(false)
       resetAddForm()
       toast.success('Expense added!')
-    } catch {
-      toast.error('Failed to add expense')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add expense')
     } finally {
       setIsSaving(false)
     }
@@ -766,6 +770,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const handleSettle = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!settlingBalance) return
+    if (!settleAccountId) {
+      toast.error('Please select a source account.')
+      return
+    }
     setIsSavingSettle(true)
     try {
       const s = await createSettlement({
@@ -781,8 +789,8 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
       setSettleAccountId('')
       setSettleNote('')
       toast.success('Payment sent — waiting for confirmation')
-    } catch {
-      toast.error('Failed to send settlement')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send settlement')
     } finally {
       setIsSavingSettle(false)
     }
@@ -791,6 +799,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const handleConfirmSettlement = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!confirmingSettlement) return
+    if (!confirmAccountId) {
+      toast.error('Please select a destination account.')
+      return
+    }
     setIsSavingConfirm(true)
     try {
       await confirmSettlement(confirmingSettlement.id, confirmAccountId || null)
@@ -838,6 +850,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
     if (amount > reviewingSettlement.amount + 0.005) {
       toast.error('Settlement amount cannot exceed the remaining balance')
+      return
+    }
+    if (!reviewAccountId) {
+      toast.error('Please select a destination account.')
       return
     }
 
@@ -892,6 +908,10 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const handleConfirmPaymentSource = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!confirmingPaymentSource) return
+    if (!paymentSourceAccountId) {
+      toast.error('Please select a source account.')
+      return
+    }
     setIsSavingPaymentSource(true)
     try {
       await confirmPaymentSource(confirmingPaymentSource.id, paymentSourceAccountId || null)
@@ -991,7 +1011,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
         <Button
           type="submit"
           className="flex-1 h-11 rounded-xl font-semibold"
-          disabled={isSaving || !isAddCustomValid}
+          disabled={isSaving || !isAddCustomValid || (expensePaidById === currentUserId && !expenseAccountId)}
         >
           {isSaving ? 'Adding…' : 'Add Expense'}
         </Button>
@@ -1615,21 +1635,9 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-1.5">
                   <Wallet className="w-3.5 h-3.5" />
-                  Pay from account <span className="text-muted-foreground font-normal">(optional)</span>
+                  Pay from account
                 </Label>
                 <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setSettleAccountId('')}
-                    className={cn(
-                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
-                      !settleAccountId
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    No account
-                  </button>
                   {accounts.map((acc) => (
                     <button
                       key={acc.id}
@@ -1668,7 +1676,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                   onClick={() => { setSettlingBalance(null); setSettleAccountId(''); setSettleNote('') }}>
                   Cancel
                 </Button>
-                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingSettle}>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingSettle || !settleAccountId}>
                   {isSavingSettle ? 'Sending…' : 'Mark as Paid'}
                 </Button>
               </div>
@@ -1725,21 +1733,9 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-1.5">
                   <Wallet className="w-3.5 h-3.5" />
-                  Destination account <span className="text-muted-foreground font-normal">(optional)</span>
+                  Destination account
                 </Label>
                 <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setReviewAccountId('')}
-                    className={cn(
-                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
-                      !reviewAccountId
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    No account
-                  </button>
                   {accounts.map((acc) => (
                     <button
                       key={acc.id}
@@ -1817,7 +1813,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={closeSettlementReview}>
                   Close
                 </Button>
-                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingReview}>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingReview || !reviewAccountId}>
                   {isSavingReview ? 'Confirming…' : 'Confirm Received'}
                 </Button>
               </div>
@@ -1852,21 +1848,9 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-1.5">
                   <Wallet className="w-3.5 h-3.5" />
-                  Add to account <span className="text-muted-foreground font-normal">(optional)</span>
+                  Add to account
                 </Label>
                 <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setConfirmAccountId('')}
-                    className={cn(
-                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
-                      !confirmAccountId
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    Don't add
-                  </button>
                   {accounts.map((acc) => (
                     <button
                       key={acc.id}
@@ -1899,7 +1883,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 >
                   Reject
                 </Button>
-                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingConfirm}>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700" disabled={isSavingConfirm || !confirmAccountId}>
                   {isSavingConfirm ? 'Confirming…' : 'Confirm Received'}
                 </Button>
               </div>
@@ -1945,18 +1929,6 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                   Only you can see your accounts. Other members won't see this.
                 </p>
                 <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentSourceAccountId('')}
-                    className={cn(
-                      'px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
-                      !paymentSourceAccountId
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-muted/50 text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    Don't track
-                  </button>
                   {accounts.map((acc) => (
                     <button
                       key={acc.id}
@@ -1992,7 +1964,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
                 <Button
                   type="submit"
                   className="flex-1 h-11 rounded-xl font-semibold"
-                  disabled={isSavingPaymentSource}
+                  disabled={isSavingPaymentSource || !paymentSourceAccountId}
                 >
                   {isSavingPaymentSource ? 'Saving…' : 'Confirm'}
                 </Button>
