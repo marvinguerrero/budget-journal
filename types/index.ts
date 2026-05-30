@@ -444,6 +444,18 @@ export interface AccountTransferFormData {
   transferred_at: string
 }
 
+export interface CreditCardPayment {
+  id: string
+  user_id: string
+  credit_card_account_id: string
+  source_account_id: string
+  transfer_id: string | null
+  amount: number
+  remaining_outstanding_after_payment: number
+  paid_at: string
+  created_at: string
+}
+
 export interface DashboardStats {
   totalExpenses: number
   totalBudget: number

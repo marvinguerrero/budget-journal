@@ -6,6 +6,7 @@ import { CATEGORY_ICONS } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
 import { Trash2, TrendingDown, TrendingUp, ArrowLeftRight, ArrowRight, CreditCard, HandCoins } from 'lucide-react'
 import { isLiabilityType } from '@/lib/constants'
+import { cn } from '@/lib/utils'
 
 interface ActivityFeedItemProps {
   entry: ActivityEntry
@@ -157,14 +158,28 @@ export function ActivityFeedItem({ entry, onDelete }: ActivityFeedItemProps) {
     )
   }
 
+  const isCreditCardPayment = entry.kind === 'transfer'
+    && entry.note.toLowerCase().startsWith('credit card payment')
+
   return (
     <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-card border border-border">
-      <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <ArrowLeftRight className="w-4 h-4 text-primary" />
+      <div className={cn(
+        'w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0',
+        isCreditCardPayment ? 'bg-emerald-500/10' : 'bg-primary/10'
+      )}>
+        {isCreditCardPayment
+          ? <CreditCard className="w-4 h-4 text-emerald-500" />
+          : <ArrowLeftRight className="w-4 h-4 text-primary" />
+        }
       </div>
       <div className="flex-1 min-w-0 space-y-0.5">
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-primary">Transfer</span>
+          <span className={cn(
+            'text-[10px] font-semibold uppercase tracking-wide',
+            isCreditCardPayment ? 'text-emerald-500' : 'text-primary'
+          )}>
+            {isCreditCardPayment ? 'Credit Card Payment' : 'Transfer'}
+          </span>
           <span className="text-[10px] text-muted-foreground">· {date}</span>
         </div>
         <div className="flex items-center gap-1 text-sm font-semibold flex-wrap">

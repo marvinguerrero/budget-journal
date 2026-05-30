@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Contact, Expense, FinancialAccount, PersonalObligation, PersonalObligationSettlement, SharedExpenseSettlement } from '@/types'
+import { Contact, CreditCardPayment, Expense, FinancialAccount, PersonalObligation, PersonalObligationSettlement, SharedExpenseSettlement } from '@/types'
 import { getBalancesData, GroupBalanceData } from '@/services/balances'
-import { createAccountTransfer } from '@/services/accountTransfers'
 import { getAllExpenses } from '@/services/expenses'
+import { getCreditCardPayments, recordCreditCardPayment } from '@/services/creditCardPayments'
 import { createSettlement, confirmSettlement, rejectSettlement, recallSettlement, undoConfirmSettlement } from '@/services/settlements'
 import {
   applyPersonalObligationPayment,
@@ -259,6 +259,7 @@ export function BalancesClient({ userId }: Props) {
   const [personalSettlements, setPersonalSettlements] = useState<PersonalObligationSettlement[]>([])
   const [contacts, setContacts] = useState<Contact[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
+  const [creditCardPayments, setCreditCardPayments] = useState<CreditCardPayment[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const { accounts, reload: reloadAccounts } = useFinancialAccounts()
   const [activeTab, setActiveTab] = useState<BalancesTab>('balances')
@@ -292,17 +293,19 @@ export function BalancesClient({ userId }: Props) {
   const load = useCallback(async () => {
     setIsLoading(true)
     try {
-      const [data, personal, contactData, expenseData] = await Promise.all([
+      const [data, personal, contactData, expenseData, cardPaymentData] = await Promise.all([
         getBalancesData(),
         getPersonalObligations(),
         getContacts(),
         getAllExpenses(),
+        getCreditCardPayments(),
       ])
       setGroupData(data)
       setPersonalObligations(personal.obligations)
       setPersonalSettlements(personal.settlements)
       setContacts(contactData)
       setExpenses(expenseData)
+      setCreditCardPayments(cardPaymentData)
     } catch {
       toast.error('Failed to load balances')
     } finally {
@@ -608,6 +611,37 @@ export function BalancesClient({ userId }: Props) {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [expenses, selectedCard, selectedCardCycle])
 
+  const selectedCardPayments = useMemo(() =>
+    selectedCard
+      ? creditCardPayments
+          .filter((payment) => payment.credit_card_account_id === selectedCard.id)
+          .sort((a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime())
+      : [],
+    [creditCardPayments, selectedCard]
+  )
+
+  const selectedCardCyclePayments = useMemo(() => {
+    if (!selectedCardCycle) return []
+    const start = new Date(selectedCardCycle.cycleStart)
+    start.setHours(0, 0, 0, 0)
+    const due = new Date(selectedCardCycle.dueDate)
+    due.setHours(23, 59, 59, 999)
+    return selectedCardPayments.filter((payment) => {
+      const paidAt = new Date(payment.paid_at)
+      return paidAt >= start && paidAt <= due
+    })
+  }, [selectedCardPayments, selectedCardCycle])
+
+  const selectedCardStatementBalance = useMemo(() =>
+    selectedCardExpenses.reduce((sum, expense) => sum + expense.amount, 0),
+    [selectedCardExpenses]
+  )
+
+  const selectedCardPaidThisCycle = useMemo(() =>
+    selectedCardCyclePayments.reduce((sum, payment) => sum + payment.amount, 0),
+    [selectedCardCyclePayments]
+  )
+
   const sourceAccounts = useMemo(() =>
     accounts.filter((account) => account.category !== 'liability'),
     [accounts]
@@ -753,12 +787,11 @@ export function BalancesClient({ userId }: Props) {
 
     setIsSavingCardPayment(true)
     try {
-      await createAccountTransfer({
-        from_account_id: cardPaymentSourceId,
-        to_account_id: payingCard.id,
+      await recordCreditCardPayment({
+        creditCardAccountId: payingCard.id,
+        sourceAccountId: cardPaymentSourceId,
         amount,
-        note: `Credit card payment - ${payingCard.name}`,
-        transferred_at: new Date().toISOString(),
+        paidAt: new Date().toISOString(),
       })
       await Promise.all([load(), reloadAccounts()])
       setPayingCard(null)
@@ -993,6 +1026,14 @@ export function BalancesClient({ userId }: Props) {
                       <p className="text-[10px] text-muted-foreground">Due Date</p>
                       <p className="text-sm font-bold">{formatDateLabel(selectedCardCycle.dueDate)}</p>
                     </div>
+                    <div className="rounded-xl bg-blue-500/10 p-3">
+                      <p className="text-[10px] text-muted-foreground">Total Paid This Cycle</p>
+                      <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{formatCurrency(selectedCardPaidThisCycle)}</p>
+                    </div>
+                    <div className="rounded-xl bg-muted/60 p-3">
+                      <p className="text-[10px] text-muted-foreground">Amount Remaining</p>
+                      <p className="text-sm font-bold">{formatCurrency(Math.abs(selectedCard.balance))}</p>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-xs">
@@ -1013,6 +1054,36 @@ export function BalancesClient({ userId }: Props) {
                       <p className="font-semibold">
                         {formatDateLabel(selectedCardCycle.cycleStart)} - {formatDateLabel(selectedCardCycle.cycleEnd)}
                       </p>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold">Current Bill Status</p>
+                      <span className={cn(
+                        'px-2 py-1 rounded-lg text-xs font-semibold',
+                        Math.abs(selectedCard.balance) <= 0.005
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                          : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                      )}>
+                        {Math.abs(selectedCard.balance) <= 0.005 ? 'Paid' : 'Open'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="rounded-xl bg-muted/50 p-3">
+                        <p className="text-muted-foreground">Statement</p>
+                        <p className="font-bold">{formatCurrency(selectedCardStatementBalance)}</p>
+                      </div>
+                      <div className="rounded-xl bg-muted/50 p-3">
+                        <p className="text-muted-foreground">Paid</p>
+                        <p className="font-bold">{formatCurrency(selectedCardPaidThisCycle)}</p>
+                      </div>
+                      <div className="rounded-xl bg-muted/50 p-3">
+                        <p className="text-muted-foreground">Remaining</p>
+                        <p className="font-bold">{formatCurrency(Math.abs(selectedCard.balance))}</p>
+                      </div>
                     </div>
                   </div>
 
@@ -1042,6 +1113,42 @@ export function BalancesClient({ userId }: Props) {
                             <p className="text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">
                               {formatCurrency(expense.amount)}
                             </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold">Payment History</p>
+                      <p className="text-xs text-muted-foreground">Newest first</p>
+                    </div>
+                    {selectedCardPayments.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center rounded-xl border border-dashed border-border">
+                        No credit card payments recorded yet.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {selectedCardPayments.map((payment) => (
+                          <div key={payment.id} className="p-3 rounded-xl bg-muted/40 space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold">{formatDateLabel(payment.paid_at)}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {accountLabel(payment.source_account_id)}
+                                </p>
+                              </div>
+                              <p className="text-sm font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                                {formatCurrency(payment.amount)}
+                              </p>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Remaining Outstanding</span>
+                              <span className="font-semibold">{formatCurrency(payment.remaining_outstanding_after_payment)}</span>
+                            </div>
                           </div>
                         ))}
                       </div>
