@@ -51,6 +51,7 @@ export function BudgetProgress({ budget, expenses, onUpdate, onDelete }: BudgetP
   const isWarning = !isOverspent && !isReached && rawPercentage >= 80
   const icon = CATEGORY_ICONS[budget.category] || '📦'
   const color = CATEGORY_COLORS[budget.category] || '#6B7280'
+  const itemLabel = budget.item && budget.item !== budget.category ? budget.item : null
 
   const status: InsightStatus = isOverspent ? 'over' : isReached ? 'reached' : isWarning ? 'warning' : 'healthy'
   const barColor = isOverspent ? '#EF4444' : (isReached || isWarning) ? '#F59E0B' : color
@@ -83,6 +84,7 @@ export function BudgetProgress({ budget, expenses, onUpdate, onDelete }: BudgetP
           {icon}
         </div>
         <p className="font-semibold text-sm">{budget.category}</p>
+        {itemLabel && <p className="text-xs text-muted-foreground">{itemLabel}</p>}
       </div>
       <div className="space-y-2">
         <Label htmlFor="editBudgetAmount" className="text-sm font-semibold">
@@ -141,6 +143,7 @@ export function BudgetProgress({ budget, expenses, onUpdate, onDelete }: BudgetP
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-sm">{budget.category}</p>
+              {itemLabel && <p className="text-xs text-muted-foreground">{itemLabel}</p>}
               <p className="text-xs text-muted-foreground">
                 {formatCurrency(spent)} of {formatCurrency(budget.amount)}
               </p>

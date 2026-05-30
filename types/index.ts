@@ -314,6 +314,7 @@ export interface Budget {
   id: string
   user_id: string
   category: string
+  item?: string
   amount: number
   month: number
   year: number
@@ -345,9 +346,77 @@ export interface ExpenseFormData {
 
 export interface BudgetFormData {
   category: string
+  item?: string
   amount: number
   month: number
   year: number
+}
+
+export type WishlistPriority = 'high' | 'medium' | 'low'
+export type WishlistStatus = 'wishlist' | 'budgeted' | 'purchased' | 'cancelled'
+
+export interface WishlistItem {
+  id: string
+  user_id: string
+  name: string
+  target_amount: number
+  category: string
+  priority: WishlistPriority | null
+  notes: string
+  product_url: string | null
+  quantity: number
+  status: WishlistStatus
+  linked_budget_id: string | null
+  created_at: string
+  updated_at: string
+  budgets?: Budget | null
+}
+
+export interface WishlistFormData {
+  name: string
+  target_amount: number
+  category: string
+  priority?: WishlistPriority | null
+  notes?: string
+  product_url?: string | null
+  quantity?: number
+}
+
+export type WishlistShareMode = 'single' | 'multiple' | 'entire'
+
+export interface WishlistShare {
+  id: string
+  owner_user_id: string
+  recipient_user_id: string
+  contact_id: string | null
+  mode: WishlistShareMode
+  share_notes: boolean
+  share_product_links: boolean
+  share_prices: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  contacts?: Contact | null
+  wishlist_share_items?: Array<{ wishlist_item_id: string }>
+}
+
+export interface SharedWishlistItem {
+  share_id: string
+  owner_user_id: string
+  owner_name: string
+  mode: WishlistShareMode
+  item_id: string
+  name: string
+  target_amount: number | null
+  category: string
+  priority: WishlistPriority | null
+  notes: string
+  product_url: string | null
+  quantity: number
+  status: WishlistStatus
+  share_notes: boolean
+  share_product_links: boolean
+  share_prices: boolean
 }
 
 export interface CategoryFormData {

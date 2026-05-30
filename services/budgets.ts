@@ -24,11 +24,12 @@ export async function createBudget(formData: BudgetFormData): Promise<Budget> {
       {
         user_id: user.id,
         category: formData.category,
+        item: formData.item?.trim() || formData.category,
         amount: formData.amount,
         month: formData.month,
         year: formData.year,
       },
-      { onConflict: 'user_id,category,month,year' }
+      { onConflict: 'user_id,category,item,month,year' }
     )
     .select()
     .single()

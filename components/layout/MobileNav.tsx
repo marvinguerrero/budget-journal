@@ -24,7 +24,7 @@ const navItems = [
     href:        '/budgets',
     label:       'Insights',
     icon:        BarChart3,
-    activePaths: ['/budgets', '/analytics', '/insights'],
+    activePaths: ['/budgets', '/wishlist', '/analytics', '/insights'],
   },
   {
     href:        '/shared',

@@ -3,10 +3,11 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { Target, PieChart } from 'lucide-react'
+import { Gift, Target, PieChart } from 'lucide-react'
 
 const tabs = [
   { href: '/budgets',   label: 'Budgets',   icon: Target   },
+  { href: '/wishlist',  label: 'Wishlist',  icon: Gift     },
   { href: '/analytics', label: 'Analytics', icon: PieChart },
 ]
 
