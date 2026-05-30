@@ -2,7 +2,7 @@
 
 import { useMemo, useEffect } from 'react'
 import { Expense, Budget, IncomeEntry, FinancialAccount } from '@/types'
-import { ACCOUNT_TYPES, isLiabilityType } from '@/lib/constants'
+import { ACCOUNT_TYPES } from '@/lib/constants'
 import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/constants'
 import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
 import { StatsCard } from '@/components/dashboard/StatsCard'
@@ -40,8 +40,8 @@ export function DashboardClient({
   const { addExpense, updateExpense, deleteExpense } = useExpenses(month, year)
   useCategories()
   const { accounts } = useFinancialAccounts()
-  const totalAssets      = useMemo(() => accounts.filter((a) => !isLiabilityType(a.type)).reduce((s, a) => s + a.balance, 0), [accounts])
-  const totalLiabilities = useMemo(() => accounts.filter((a) => isLiabilityType(a.type)).reduce((s, a) => s + Math.abs(a.balance), 0), [accounts])
+  const totalAssets      = useMemo(() => accounts.filter((a) => a.category !== 'liability').reduce((s, a) => s + a.balance, 0), [accounts])
+  const totalLiabilities = useMemo(() => accounts.filter((a) => a.category === 'liability').reduce((s, a) => s + Math.abs(a.balance), 0), [accounts])
   const netWorth         = totalAssets - totalLiabilities
 
   useEffect(() => {
@@ -56,18 +56,40 @@ export function DashboardClient({
 
   const accountTypeLabel = (type: FinancialAccount['type']) =>
     ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? type
+  const accountTypeEmoji = (account: FinancialAccount) =>
+    ACCOUNT_TYPES.find((t) => t.value === account.type)?.emoji ?? (account.category === 'liability' ? '💳' : '🏷️')
 
-  const typeSummaries = useMemo(() =>
-    ACCOUNT_TYPES
-      .map(({ value, label, emoji, category }) => {
-        const group = accounts.filter((a) => a.type === value)
-        const total = group.reduce((s, a) =>
-          isLiabilityType(a.type) ? s + Math.abs(a.balance) : s + a.balance, 0)
-        return { value, label, emoji, category, total, count: group.length }
-      })
-      .filter((t) => t.count > 0),
-    [accounts]
-  )
+  const typeSummaries = useMemo(() => {
+    const summaries = new Map<string, {
+      value: string
+      label: string
+      emoji: string
+      category: FinancialAccount['category']
+      total: number
+      count: number
+    }>()
+
+    for (const account of accounts) {
+      const existing = summaries.get(account.type)
+      const total = account.category === 'liability' ? Math.abs(account.balance) : account.balance
+
+      if (existing) {
+        existing.total += total
+        existing.count += 1
+      } else {
+        summaries.set(account.type, {
+          value: account.type,
+          label: accountTypeLabel(account.type),
+          emoji: accountTypeEmoji(account),
+          category: account.category,
+          total,
+          count: 1,
+        })
+      }
+    }
+
+    return Array.from(summaries.values())
+  }, [accounts])
 
   const stats = useMemo(() => {
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
@@ -190,8 +212,11 @@ export function DashboardClient({
                 <div className="min-w-0">
                   <p className="text-xs font-semibold truncate">{acc.name}</p>
                   <p className="text-[10px] text-muted-foreground">{accountTypeLabel(acc.type)}</p>
-                  <p className={`text-xs font-bold tabular-nums ${acc.balance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                    {formatCurrency(acc.balance)}
+                  <p className={`text-xs font-bold tabular-nums ${acc.category === 'liability' && acc.balance < 0 ? 'text-rose-600 dark:text-rose-400' : acc.balance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {acc.category === 'liability'
+                      ? acc.balance < 0 ? `${formatCurrency(Math.abs(acc.balance))} owed` : 'No debt'
+                      : formatCurrency(acc.balance)
+                    }
                   </p>
                 </div>
               </a>

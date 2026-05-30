@@ -6,7 +6,7 @@ import { useAccountActivity } from '@/hooks/useAccountActivity'
 import { deleteExpense } from '@/services/expenses'
 import { deleteIncomeEntry } from '@/services/incomeEntries'
 import { deleteAccountTransfer } from '@/services/accountTransfers'
-import { ACCOUNT_TYPES, isLiabilityType } from '@/lib/constants'
+import { ACCOUNT_TYPES } from '@/lib/constants'
 import { formatCurrency, getMonthName } from '@/utils/format'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
@@ -37,14 +37,14 @@ const YEARS = ['2024', '2025', '2026']
 
 // Helper: display balance for an account (liability shown as positive debt)
 function displayBalance(acc: FinancialAccount) {
-  if (isLiabilityType(acc.type)) {
+  if (acc.category === 'liability') {
     return acc.balance < 0 ? `${formatCurrency(Math.abs(acc.balance))} owed` : 'No debt'
   }
   return formatCurrency(acc.balance)
 }
 
 function balanceColor(acc: FinancialAccount) {
-  if (isLiabilityType(acc.type)) {
+  if (acc.category === 'liability') {
     return acc.balance < 0
       ? 'text-rose-600 dark:text-rose-400'
       : 'text-emerald-600 dark:text-emerald-400'
@@ -63,39 +63,62 @@ export default function AccountsPage() {
   const [year,  setYear]                    = useState(String(now.getFullYear()))
   const [showTransfer, setShowTransfer]     = useState(false)
   const isMobile = useIsMobile()
+  const typeLabel = (type: string) => ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? type
+  const typeEmoji = (type: string, category: FinancialAccount['category']) =>
+    ACCOUNT_TYPES.find((t) => t.value === type)?.emoji ?? (category === 'liability' ? '💳' : '🏷️')
 
   // ── Financial summary ─────────────────────────────────────────
-  const assetAccounts     = useMemo(() => accounts.filter((a) => !isLiabilityType(a.type)), [accounts])
-  const liabilityAccounts = useMemo(() => accounts.filter((a) => isLiabilityType(a.type)), [accounts])
+  const assetAccounts     = useMemo(() => accounts.filter((a) => a.category !== 'liability'), [accounts])
+  const liabilityAccounts = useMemo(() => accounts.filter((a) => a.category === 'liability'), [accounts])
   const totalAssets       = useMemo(() => assetAccounts.reduce((s, a) => s + a.balance, 0), [assetAccounts])
   const totalLiabilities  = useMemo(() => liabilityAccounts.reduce((s, a) => s + Math.abs(a.balance), 0), [liabilityAccounts])
   const netWorth          = totalAssets - totalLiabilities
 
   // ── Type summaries (filtered by category) ────────────────────
-  const typeSummaries = useMemo(() =>
-    ACCOUNT_TYPES
-      .filter((t) => categoryFilter === 'all' || t.category === categoryFilter)
-      .map(({ value, label, emoji, category }) => {
-        const group = accounts.filter((a) => a.type === value)
-        const total = group.reduce((s, a) =>
-          isLiabilityType(a.type) ? s + Math.abs(a.balance) : s + a.balance, 0)
-        return { value, label, emoji, category, count: group.length, total }
-      })
-      .filter((t) => t.count > 0),
-    [accounts, categoryFilter]
-  )
+  const typeSummaries = useMemo(() => {
+    const summaries = new Map<string, {
+      value: string
+      label: string
+      emoji: string
+      category: FinancialAccount['category']
+      count: number
+      total: number
+    }>()
+
+    for (const account of accounts) {
+      if (categoryFilter !== 'all' && account.category !== categoryFilter) continue
+      const existing = summaries.get(account.type)
+      const total = account.category === 'liability' ? Math.abs(account.balance) : account.balance
+
+      if (existing) {
+        existing.count += 1
+        existing.total += total
+      } else {
+        summaries.set(account.type, {
+          value: account.type,
+          label: typeLabel(account.type),
+          emoji: typeEmoji(account.type, account.category),
+          category: account.category,
+          count: 1,
+          total,
+        })
+      }
+    }
+
+    return Array.from(summaries.values())
+  }, [accounts, categoryFilter])
 
   // ── Visible accounts ──────────────────────────────────────────
   const visibleAccounts = useMemo(() => {
     let list = accounts
     if (categoryFilter !== 'all') list = list.filter((a) =>
-      categoryFilter === 'liability' ? isLiabilityType(a.type) : !isLiabilityType(a.type)
+      a.category === categoryFilter
     )
     if (typeFilter !== 'all') list = list.filter((a) => a.type === typeFilter)
     return list
   }, [accounts, categoryFilter, typeFilter])
 
-  const activeType = ACCOUNT_TYPES.find((t) => t.value === typeFilter)
+  const activeType = typeSummaries.find((t) => t.value === typeFilter)
 
   // ── Activity ─────────────────────────────────────────────────
   const parsedMonth = month === 'all' ? undefined : Number(month)
@@ -113,9 +136,8 @@ export default function AccountsPage() {
     }
     if (categoryFilter !== 'all') {
       return entries.filter((e) => {
-        const isLiab = (type: string) => isLiabilityType(type)
         if (e.kind === 'expense' || e.kind === 'income' || e.kind === 'personal_settlement' || e.kind === 'settlement_history') {
-          return categoryFilter === 'liability' ? isLiab(e.account.type) : !isLiab(e.account.type)
+          return e.account.category === categoryFilter
         }
         return true
       })
@@ -504,7 +526,7 @@ function AccountGroup({
 }
 
 function AccountCard({ acc }: { acc: FinancialAccount }) {
-  const isLiab = isLiabilityType(acc.type)
+  const isLiab = acc.category === 'liability'
   const typeInfo = ACCOUNT_TYPES.find((t) => t.value === acc.type)
   return (
     <Link href={`/activity/accounts/${acc.id}`} className="flex items-center gap-3 p-4 rounded-2xl border border-border bg-card hover:bg-accent/30 active:scale-[0.99] transition-all">

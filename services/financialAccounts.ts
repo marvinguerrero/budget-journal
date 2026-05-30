@@ -22,7 +22,7 @@ export async function createFinancialAccount(form: FinancialAccountFormData): Pr
   if (!user) throw new Error('Not authenticated')
   const { data, error } = await supabase
     .from('financial_accounts')
-    .insert({ user_id: user.id, ...form, category: deriveCategory(form.type) })
+    .insert({ user_id: user.id, ...form, category: form.category ?? deriveCategory(form.type) })
     .select()
     .single()
   if (error) throw error
@@ -35,7 +35,7 @@ export async function updateFinancialAccount(
 ): Promise<FinancialAccount> {
   const supabase = createClient()
   const updates = form.type
-    ? { ...form, category: deriveCategory(form.type) }
+    ? { ...form, category: form.category ?? deriveCategory(form.type) }
     : form
   const { data, error } = await supabase
     .from('financial_accounts')

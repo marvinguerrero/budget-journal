@@ -50,8 +50,18 @@ export interface IncomeSource {
   created_at: string
 }
 
-export type AccountType = 'cash' | 'bank' | 'ewallet' | 'credit' | 'savings' | 'investment' | 'loan'
+export type AccountType = string
 export type AccountCategory = 'asset' | 'liability'
+
+export interface FinancialAccountType {
+  id: string
+  user_id: string | null
+  name: string
+  category: AccountCategory
+  is_default: boolean
+  created_at: string
+  updated_at: string
+}
 
 export interface FinancialAccount {
   id: string
@@ -70,6 +80,7 @@ export interface FinancialAccountFormData {
   emoji: string
   color: string
   type: AccountType
+  category?: AccountCategory
   balance: number
 }
 

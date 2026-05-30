@@ -16,6 +16,7 @@ import {
 import { useCategories } from '@/hooks/useCategories'
 import { useIncomeSources } from '@/hooks/useIncomeSources'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
+import { useFinancialAccountTypes } from '@/hooks/useFinancialAccountTypes'
 import {
   Sun, Moon, Monitor, LogOut, User, Palette, Layers, Trash2, Pencil, Wallet, AlertTriangle,
 } from 'lucide-react'
@@ -26,10 +27,7 @@ import {
   PRESET_EMOJIS_INCOME, PRESET_EMOJIS_ACCOUNTS, isLiabilityType,
 } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
-import type { AccountType, Category, IncomeSource } from '@/types'
-
-const ASSET_TYPES = ACCOUNT_TYPES.filter((t) => t.category === 'asset')
-const LIAB_TYPES  = ACCOUNT_TYPES.filter((t) => t.category === 'liability')
+import type { AccountCategory, AccountType, Category, FinancialAccountType, IncomeSource } from '@/types'
 
 const THEMES = [
   { value: 'light',  label: 'Light',  icon: Sun },
@@ -80,6 +78,7 @@ export default function SettingsPage() {
   const { categories, deleteCategory, updateCategory } = useCategories()
   const { sources, removeSource, editSource } = useIncomeSources()
   const { accounts, addAccount, editAccount, removeAccount } = useFinancialAccounts()
+  const { accountTypes, addAccountType, editAccountType, removeAccountType } = useFinancialAccountTypes()
 
   // ── Category edit state ──────────────────────────────────────
   const [editingCat, setEditingCat] = useState<Category | null>(null)
@@ -150,6 +149,14 @@ export default function SettingsPage() {
   const [editAccColor,   setEditAccColor]   = useState('#3B82F6')
   const [isSavingAcc,    setIsSavingAcc]    = useState(false)
 
+  // ── Account type management state ────────────────────────────
+  const [typeName, setTypeName] = useState('')
+  const [typeCategory, setTypeCategory] = useState<AccountCategory>('asset')
+  const [editingType, setEditingType] = useState<FinancialAccountType | null>(null)
+  const [editTypeName, setEditTypeName] = useState('')
+  const [editTypeCategory, setEditTypeCategory] = useState<AccountCategory>('asset')
+  const [isSavingType, setIsSavingType] = useState(false)
+
   // ── Account delete confirm ───────────────────────────────────
   const [deleteAccId, setDeleteAccId] = useState<string | null>(null)
   const deleteAccTarget = accounts.find((a) => a.id === deleteAccId)
@@ -169,9 +176,10 @@ export default function SettingsPage() {
     e.preventDefault()
     setIsSavingAcc(true)
     const rawBalance = parseFloat(accBalance) || 0
-    const balance = isLiabilityType(accType) ? -(Math.abs(rawBalance)) : rawBalance
+    const category = accountTypeCategory(accType)
+    const balance = category === 'liability' ? -(Math.abs(rawBalance)) : rawBalance
     try {
-      await addAccount({ name: accName.trim(), emoji: accEmoji, color: accColor, type: accType, balance })
+      await addAccount({ name: accName.trim(), emoji: accEmoji, color: accColor, type: accType, category, balance })
       setShowCreateAcc(false)
       setAccName(''); setAccEmoji('🏦'); setAccType('bank'); setAccBalance('0'); setAccColor('#3B82F6')
     } finally {
@@ -184,9 +192,10 @@ export default function SettingsPage() {
     if (!editingAcc) return
     setIsSavingAcc(true)
     const rawBalance = parseFloat(editAccBalance) || 0
-    const balance = isLiabilityType(editAccType) ? -(Math.abs(rawBalance)) : rawBalance
+    const category = accountTypeCategory(editAccType)
+    const balance = category === 'liability' ? -(Math.abs(rawBalance)) : rawBalance
     try {
-      await editAccount(editingAcc, { name: editAccName.trim(), emoji: editAccEmoji, type: editAccType, balance, color: editAccColor })
+      await editAccount(editingAcc, { name: editAccName.trim(), emoji: editAccEmoji, type: editAccType, category, balance, color: editAccColor })
       setEditingAcc(null)
     } finally {
       setIsSavingAcc(false)
@@ -203,6 +212,68 @@ export default function SettingsPage() {
   const initials       = user?.email?.slice(0, 2).toUpperCase() || 'U'
   const userCategories = categories.filter((c) => !c.is_default)
   const userSources    = sources.filter((s) => !s.is_default)
+  const customAccountTypes = accountTypes.filter((t) => !t.is_default)
+  const accountTypeOptions = [
+    ...ACCOUNT_TYPES.map((t) => ({
+      id: t.value,
+      value: t.value,
+      label: t.label,
+      emoji: t.emoji,
+      category: t.category as AccountCategory,
+    })),
+    ...customAccountTypes.map((t) => ({
+      id: t.id,
+      value: t.name,
+      label: t.name,
+      emoji: '🏷️',
+      category: t.category,
+    })),
+  ]
+  const assetTypeOptions = accountTypeOptions.filter((t) => t.category === 'asset')
+  const liabilityTypeOptions = accountTypeOptions.filter((t) => t.category === 'liability')
+  const accountTypeCategory = (type: string): AccountCategory => {
+    const custom = customAccountTypes.find((t) => t.name === type)
+    if (custom) return custom.category
+    return isLiabilityType(type) ? 'liability' : 'asset'
+  }
+  const accountTypeLabel = (type: string) =>
+    ACCOUNT_TYPES.find((t) => t.value === type)?.label
+    ?? customAccountTypes.find((t) => t.name === type)?.name
+    ?? type
+
+  const handleCreateType = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    setIsSavingType(true)
+    try {
+      const created = await addAccountType({ name: typeName.trim(), category: typeCategory })
+      if (created) {
+        setTypeName('')
+        setTypeCategory('asset')
+      }
+    } finally {
+      setIsSavingType(false)
+    }
+  }
+
+  const openEditType = (type: FinancialAccountType) => {
+    setEditingType(type)
+    setEditTypeName(type.name)
+    setEditTypeCategory(type.category)
+  }
+
+  const handleUpdateType = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!editingType) return
+    setIsSavingType(true)
+    try {
+      const updated = await editAccountType(editingType.id, { name: editTypeName.trim(), category: editTypeCategory })
+      if (updated) {
+        setEditingType(null)
+      }
+    } finally {
+      setIsSavingType(false)
+    }
+  }
 
   return (
     <div className="p-4 lg:p-6 pb-24 lg:pb-6 space-y-6 max-w-2xl">
@@ -342,6 +413,76 @@ export default function SettingsPage() {
         )}
       </div>
 
+      {/* Financial Account Types */}
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center gap-3">
+          <Layers className="w-4 h-4 text-muted-foreground" />
+          <h2 className="font-semibold text-sm">Financial Account Types</h2>
+        </div>
+        <Separator />
+        <form onSubmit={handleCreateType} className="grid gap-3 sm:grid-cols-[1fr_140px_auto]">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">Type Name</Label>
+            <Input
+              placeholder="e.g. Crypto Wallet"
+              value={typeName}
+              onChange={(e) => setTypeName(e.target.value)}
+              className="h-10 rounded-xl"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">Category</Label>
+            <Select value={typeCategory} onValueChange={(v: AccountCategory | null) => v && setTypeCategory(v)}>
+              <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="asset">Asset</SelectItem>
+                <SelectItem value="liability">Liability</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button type="submit" className="h-10 rounded-xl self-end" disabled={isSavingType || !typeName.trim()}>
+            {isSavingType ? 'Saving…' : 'Add Type'}
+          </Button>
+        </form>
+        <div className="space-y-1.5">
+          {accountTypes.map((type) => (
+            <div key={type.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-accent/50">
+              <span className="w-8 h-8 rounded-lg flex items-center justify-center text-lg flex-shrink-0 bg-muted">
+                {type.category === 'asset' ? '💼' : '💳'}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{type.name}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {type.category === 'asset' ? 'Asset' : 'Liability'}
+                  {type.is_default && <span className="ml-1">· Default</span>}
+                </p>
+              </div>
+              {!type.is_default && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => openEditType(type)}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                    aria-label={`Edit ${type.name}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeAccountType(type.id)}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    aria-label={`Delete ${type.name}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Financial Accounts */}
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
         <div className="flex items-center justify-between">
@@ -359,8 +500,7 @@ export default function SettingsPage() {
         ) : (
           <div className="space-y-2">
             {accounts.map((acc) => {
-              const typeInfo = ACCOUNT_TYPES.find((t) => t.value === acc.type)
-              const isLiab   = isLiabilityType(acc.type)
+              const isLiab = acc.category === 'liability'
               return (
                 <div key={acc.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-accent/50">
                   <span
@@ -372,7 +512,7 @@ export default function SettingsPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{acc.name}</p>
                     <p className="text-[10px] text-muted-foreground">
-                      {typeInfo?.label ?? acc.type}
+                      {accountTypeLabel(acc.type)}
                       {isLiab && <span className="ml-1 text-amber-500">· Liability</span>}
                     </p>
                   </div>
@@ -527,9 +667,9 @@ export default function SettingsPage() {
                 <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__asset_header__" disabled className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Assets</SelectItem>
-                  {ASSET_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.emoji} {t.label}</SelectItem>)}
+                  {assetTypeOptions.map((t) => <SelectItem key={t.id} value={t.value}>{t.emoji} {t.label}</SelectItem>)}
                   <SelectItem value="__liab_header__" disabled className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mt-1">Liabilities</SelectItem>
-                  {LIAB_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.emoji} {t.label}</SelectItem>)}
+                  {liabilityTypeOptions.map((t) => <SelectItem key={t.id} value={t.value}>{t.emoji} {t.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -539,9 +679,9 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold">
-                {isLiabilityType(accType) ? 'Current Debt (₱)' : 'Current Balance (₱)'}
+                {accountTypeCategory(accType) === 'liability' ? 'Current Debt (₱)' : 'Current Balance (₱)'}
               </Label>
-              {isLiabilityType(accType) && (
+              {accountTypeCategory(accType) === 'liability' && (
                 <p className="text-[10px] text-muted-foreground">Enter amount currently owed (positive number)</p>
               )}
               <div className="relative">
@@ -558,6 +698,45 @@ export default function SettingsPage() {
               <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setShowCreateAcc(false)}>Cancel</Button>
               <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingAcc || !accName.trim()}>
                 {isSavingAcc ? 'Saving…' : 'Add Account'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Account Type dialog ─────────────────────────── */}
+      <Dialog open={!!editingType} onOpenChange={(open) => { if (!open) setEditingType(null) }}>
+        <DialogContent className="sm:max-w-xs rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Edit Account Type</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateType} className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Type Name</Label>
+              <Input
+                placeholder="e.g. Emergency Fund"
+                value={editTypeName}
+                onChange={(e) => setEditTypeName(e.target.value)}
+                className="h-11 rounded-xl"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Category</Label>
+              <Select value={editTypeCategory} onValueChange={(v: AccountCategory | null) => v && setEditTypeCategory(v)}>
+                <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="asset">Asset</SelectItem>
+                  <SelectItem value="liability">Liability</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setEditingType(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingType || !editTypeName.trim()}>
+                {isSavingType ? 'Saving…' : 'Save Changes'}
               </Button>
             </div>
           </form>
@@ -589,9 +768,9 @@ export default function SettingsPage() {
                 <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__asset_header__" disabled className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Assets</SelectItem>
-                  {ASSET_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.emoji} {t.label}</SelectItem>)}
+                  {assetTypeOptions.map((t) => <SelectItem key={t.id} value={t.value}>{t.emoji} {t.label}</SelectItem>)}
                   <SelectItem value="__liab_header__" disabled className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mt-1">Liabilities</SelectItem>
-                  {LIAB_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.emoji} {t.label}</SelectItem>)}
+                  {liabilityTypeOptions.map((t) => <SelectItem key={t.id} value={t.value}>{t.emoji} {t.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -601,9 +780,9 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold">
-                {isLiabilityType(editAccType) ? 'Current Debt (₱)' : 'Current Balance (₱)'}
+                {accountTypeCategory(editAccType) === 'liability' ? 'Current Debt (₱)' : 'Current Balance (₱)'}
               </Label>
-              {isLiabilityType(editAccType) && (
+              {accountTypeCategory(editAccType) === 'liability' && (
                 <p className="text-[10px] text-muted-foreground">Enter amount currently owed (positive number)</p>
               )}
               <div className="relative">

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { useAccountDetail, AccountDetailEntry } from '@/hooks/useAccountDetail'
-import { ACCOUNT_TYPES, CATEGORY_ICONS, CATEGORY_COLORS, isLiabilityType } from '@/lib/constants'
+import { ACCOUNT_TYPES, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
@@ -57,7 +57,7 @@ export function AccountDetailClient({ accountId }: Props) {
     )
   }
 
-  const isLiab    = isLiabilityType(account.type)
+  const isLiab    = account.category === 'liability'
   const typeInfo  = ACCOUNT_TYPES.find((t) => t.value === account.type)
 
   const balanceDisplay = isLiab
@@ -311,7 +311,7 @@ function AccountDetailEntryItem({ entry, isLiab }: { entry: AccountDetailEntry; 
 
   // Transfer
   const isIn = entry.direction === 'in'
-  const otherIsLiab = isLiabilityType(entry.otherAccount.type)
+  const otherIsLiab = entry.otherAccount.category === 'liability'
 
   let amountLabel: string
   let amountColor: string
