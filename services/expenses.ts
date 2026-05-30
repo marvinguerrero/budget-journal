@@ -233,7 +233,8 @@ export async function updateExpense(id: string, formData: Partial<ExpenseFormDat
 
 export async function deleteExpense(id: string): Promise<void> {
   const supabase = createClient()
-  await supabase.from('personal_obligations').delete().eq('source_expense_id', id)
-  const { error } = await supabase.from('expenses').delete().eq('id', id)
-  if (error) throw error
+  const { error } = await supabase.rpc('delete_expense_safely', {
+    p_expense_id: id,
+  })
+  if (error) throw new Error(error.message)
 }

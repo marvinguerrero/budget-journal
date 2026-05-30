@@ -155,8 +155,8 @@ export default function AccountsPage() {
       toast.success('Entry removed')
       reloadAccounts()
       reloadActivity()
-    } catch {
-      toast.error('Failed to remove entry')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove entry')
     }
   }
 

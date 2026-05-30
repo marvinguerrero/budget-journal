@@ -35,9 +35,10 @@ export function useExpenses(month?: number, year?: number) {
       if (newExpense) addExpense(newExpense)
       toast.success(formData.obligation_type === 'i_owe' ? 'Payable added!' : 'Expense added!')
       return newExpense
-    } catch {
-      toast.error('Failed to add expense')
-      throw new Error('Failed to add expense')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to add expense'
+      toast.error(message)
+      throw new Error(message)
     }
   }
 
@@ -52,9 +53,10 @@ export function useExpenses(month?: number, year?: number) {
         toast.success('Payable added!')
       }
       return updated
-    } catch {
-      toast.error('Failed to update expense')
-      throw new Error('Failed to update expense')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update expense'
+      toast.error(message)
+      throw new Error(message)
     }
   }
 
@@ -63,9 +65,9 @@ export function useExpenses(month?: number, year?: number) {
       await deleteExpense(id)
       removeExpense(id)
       toast.success('Expense deleted')
-    } catch {
-      toast.error('Failed to delete expense')
-      throw new Error('Failed to delete expense')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete expense'
+      toast.error(message)
     }
   }
 
