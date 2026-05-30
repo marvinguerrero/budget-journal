@@ -136,6 +136,7 @@ export interface AppNotification {
     | 'payment_source_pending'
     | 'contact_request'
     | 'personal_debt_created'
+    | 'credit_card_due'
   title: string
   message: string
   is_read: boolean

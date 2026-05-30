@@ -315,6 +315,17 @@ export function BalancesClient({ userId }: Props) {
 
   useEffect(() => { load() }, [load])
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('tab') === 'credit_cards') {
+      setActiveTab('credit_cards')
+    }
+    const cardId = params.get('card')
+    if (cardId) {
+      setSelectedCardId(cardId)
+    }
+  }, [])
+
   // ── All settlements flat list (for pending confirmation section) ─
   const allSettlements = useMemo(() =>
     groupData.flatMap((gd) =>

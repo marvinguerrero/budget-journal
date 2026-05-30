@@ -43,6 +43,35 @@ export function DashboardClient({
   const totalAssets      = useMemo(() => accounts.filter((a) => a.category !== 'liability').reduce((s, a) => s + a.balance, 0), [accounts])
   const totalLiabilities = useMemo(() => accounts.filter((a) => a.category === 'liability').reduce((s, a) => s + Math.abs(a.balance), 0), [accounts])
   const netWorth         = totalAssets - totalLiabilities
+  const upcomingCreditCardBills = useMemo(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const localDaysInMonth = (yearValue: number, monthIndex: number) => new Date(yearValue, monthIndex + 1, 0).getDate()
+    const dateForDay = (yearValue: number, monthIndex: number, day: number) =>
+      new Date(yearValue, monthIndex, Math.min(day, localDaysInMonth(yearValue, monthIndex)))
+
+    return accounts
+      .filter((account) =>
+        account.category === 'liability'
+        && account.type === 'credit'
+        && account.balance < -0.005
+        && account.soa_day
+        && account.due_day
+      )
+      .map((account) => {
+        const soa = account.soa_day!
+        const due = account.due_day!
+        const candidateStatement = dateForDay(today.getFullYear(), today.getMonth(), soa)
+        const statementDate = today <= candidateStatement
+          ? candidateStatement
+          : dateForDay(today.getFullYear(), today.getMonth() + 1, soa)
+        const dueDate = dateForDay(statementDate.getFullYear(), statementDate.getMonth() + (due > soa ? 0 : 1), due)
+        const daysRemaining = Math.ceil((dueDate.getTime() - today.getTime()) / 86_400_000)
+        return { account, dueDate, daysRemaining, amountDue: Math.abs(account.balance) }
+      })
+      .filter((bill) => bill.daysRemaining >= 0 && bill.daysRemaining <= 5)
+      .sort((a, b) => a.daysRemaining - b.daysRemaining)
+  }, [accounts])
 
   useEffect(() => {
     setExpenses(initialExpenses)
@@ -225,6 +254,38 @@ export function DashboardClient({
           <a href="/activity/accounts" className="block text-center text-xs text-primary font-medium hover:underline pt-0.5">
             View all accounts →
           </a>
+        </div>
+      )}
+
+      {upcomingCreditCardBills.length > 0 && (
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold">Upcoming Bills</p>
+              <p className="text-xs text-muted-foreground">Credit card payments due soon</p>
+            </div>
+            <a href="/balances?tab=credit_cards" className="text-xs font-semibold text-primary">View</a>
+          </div>
+          <div className="space-y-2">
+            {upcomingCreditCardBills.map(({ account, dueDate, daysRemaining, amountDue }) => (
+              <a
+                key={account.id}
+                href={`/balances?tab=credit_cards&card=${account.id}`}
+                className="flex items-center justify-between gap-3 rounded-xl bg-background/70 border border-border/60 p-3"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">{account.emoji} {account.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Due: {dueDate.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-sm font-bold tabular-nums">{formatCurrency(amountDue)}</p>
+                  <p className="text-xs text-muted-foreground">{daysRemaining === 0 ? 'Today' : `${daysRemaining}d left`}</p>
+                </div>
+              </a>
+            ))}
+          </div>
         </div>
       )}
 

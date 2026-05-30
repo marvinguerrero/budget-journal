@@ -31,6 +31,7 @@ const TYPE_ICON: Record<string, string> = {
   payment_source_pending: '💳',
   contact_request:         '🤝',
   personal_debt_created:   '🧾',
+  credit_card_due:         '💳',
 }
 
 export function NotificationBell() {
@@ -81,7 +82,9 @@ export function NotificationBell() {
           ? '/shared/contacts'
           : n.type === 'personal_debt_created'
             ? '/balances'
-            : `/shared/${n.related_id}`
+            : n.type === 'credit_card_due'
+              ? `/balances?tab=credit_cards&card=${n.related_id}`
+              : `/shared/${n.related_id}`
       )
     }
   }

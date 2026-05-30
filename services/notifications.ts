@@ -3,6 +3,7 @@ import { AppNotification } from '@/types'
 
 export async function getNotifications(): Promise<AppNotification[]> {
   const supabase = createClient()
+  await supabase.rpc('generate_credit_card_due_notifications')
   const { data, error } = await supabase
     .from('notifications')
     .select('*')
