@@ -35,6 +35,54 @@ const THEMES = [
   { value: 'system', label: 'System', icon: Monitor },
 ]
 
+const isCreditCardType = (type: string) => type === 'credit'
+
+function daysInMonth(year: number, monthIndex: number) {
+  return new Date(year, monthIndex + 1, 0).getDate()
+}
+
+function dateForDay(year: number, monthIndex: number, day: number) {
+  return new Date(year, monthIndex, Math.min(day, daysInMonth(year, monthIndex)))
+}
+
+function formatDateLabel(value: Date | string | null | undefined) {
+  if (!value) return 'Not set'
+  const date = typeof value === 'string' ? new Date(value + (value.length === 10 ? 'T00:00:00' : '')) : value
+  return date.toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
+function addMonthsClamped(date: Date, months: number) {
+  return dateForDay(date.getFullYear(), date.getMonth() + months, date.getDate())
+}
+
+function getCreditCardPreview(soaDay: string, dueDay: string, lastStatementDate: string) {
+  const soa = Number(soaDay)
+  const due = Number(dueDay)
+  if (!soa || !due) return null
+
+  const today = new Date()
+  const lastStatement = lastStatementDate ? new Date(lastStatementDate + 'T00:00:00') : null
+  let nextStatement: Date
+
+  if (lastStatement) {
+    nextStatement = dateForDay(lastStatement.getFullYear(), lastStatement.getMonth() + 1, soa)
+    while (nextStatement < today) nextStatement = addMonthsClamped(nextStatement, 1)
+  } else {
+    const candidate = dateForDay(today.getFullYear(), today.getMonth(), soa)
+    nextStatement = today <= candidate
+      ? candidate
+      : dateForDay(today.getFullYear(), today.getMonth() + 1, soa)
+  }
+
+  const previousStatement = dateForDay(nextStatement.getFullYear(), nextStatement.getMonth() - 1, soa)
+  const cycleStart = new Date(previousStatement)
+  cycleStart.setDate(cycleStart.getDate() + 1)
+  const dueMonthOffset = due > soa ? 0 : 1
+  const dueDate = dateForDay(nextStatement.getFullYear(), nextStatement.getMonth() + dueMonthOffset, due)
+
+  return { cycleStart, cycleEnd: nextStatement, nextStatement, dueDate }
+}
+
 // ── Shared sub-components ────────────────────────────────────
 
 function EmojiPicker({ emojis, value, onChange }: { emojis: string[]; value: string; onChange: (v: string) => void }) {
@@ -139,6 +187,10 @@ export default function SettingsPage() {
   const [accType,    setAccType]    = useState<AccountType>('bank')
   const [accBalance, setAccBalance] = useState('0')
   const [accColor,   setAccColor]   = useState('#3B82F6')
+  const [accCreditLimit, setAccCreditLimit] = useState('')
+  const [accSoaDay, setAccSoaDay] = useState('')
+  const [accDueDay, setAccDueDay] = useState('')
+  const [accLastStatementDate, setAccLastStatementDate] = useState('')
 
   // ── Account edit state ───────────────────────────────────────
   const [editingAcc,     setEditingAcc]     = useState<string | null>(null)
@@ -147,6 +199,10 @@ export default function SettingsPage() {
   const [editAccType,    setEditAccType]    = useState<AccountType>('bank')
   const [editAccBalance, setEditAccBalance] = useState('0')
   const [editAccColor,   setEditAccColor]   = useState('#3B82F6')
+  const [editAccCreditLimit, setEditAccCreditLimit] = useState('')
+  const [editAccSoaDay, setEditAccSoaDay] = useState('')
+  const [editAccDueDay, setEditAccDueDay] = useState('')
+  const [editAccLastStatementDate, setEditAccLastStatementDate] = useState('')
   const [isSavingAcc,    setIsSavingAcc]    = useState(false)
 
   // ── Account type management state ────────────────────────────
@@ -170,6 +226,10 @@ export default function SettingsPage() {
     setEditAccType(acc.type)
     setEditAccBalance(String(Math.abs(acc.balance)))
     setEditAccColor(acc.color ?? '#3B82F6')
+    setEditAccCreditLimit(acc.credit_limit?.toString() ?? '')
+    setEditAccSoaDay(acc.soa_day?.toString() ?? '')
+    setEditAccDueDay(acc.due_day?.toString() ?? '')
+    setEditAccLastStatementDate(acc.last_statement_date?.slice(0, 10) ?? '')
   }
 
   const handleCreateAcc = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -177,11 +237,24 @@ export default function SettingsPage() {
     setIsSavingAcc(true)
     const rawBalance = parseFloat(accBalance) || 0
     const category = accountTypeCategory(accType)
+    const isCreditCard = isCreditCardType(accType)
     const balance = category === 'liability' ? -(Math.abs(rawBalance)) : rawBalance
     try {
-      await addAccount({ name: accName.trim(), emoji: accEmoji, color: accColor, type: accType, category, balance })
+      await addAccount({
+        name: accName.trim(),
+        emoji: accEmoji,
+        color: accColor,
+        type: accType,
+        category,
+        balance,
+        credit_limit: isCreditCard ? Number(accCreditLimit) : null,
+        soa_day: isCreditCard ? Number(accSoaDay) : null,
+        due_day: isCreditCard ? Number(accDueDay) : null,
+        last_statement_date: isCreditCard && accLastStatementDate ? accLastStatementDate : null,
+      })
       setShowCreateAcc(false)
       setAccName(''); setAccEmoji('🏦'); setAccType('bank'); setAccBalance('0'); setAccColor('#3B82F6')
+      setAccCreditLimit(''); setAccSoaDay(''); setAccDueDay(''); setAccLastStatementDate('')
     } finally {
       setIsSavingAcc(false)
     }
@@ -193,9 +266,21 @@ export default function SettingsPage() {
     setIsSavingAcc(true)
     const rawBalance = parseFloat(editAccBalance) || 0
     const category = accountTypeCategory(editAccType)
+    const isCreditCard = isCreditCardType(editAccType)
     const balance = category === 'liability' ? -(Math.abs(rawBalance)) : rawBalance
     try {
-      await editAccount(editingAcc, { name: editAccName.trim(), emoji: editAccEmoji, type: editAccType, category, balance, color: editAccColor })
+      await editAccount(editingAcc, {
+        name: editAccName.trim(),
+        emoji: editAccEmoji,
+        type: editAccType,
+        category,
+        balance,
+        color: editAccColor,
+        credit_limit: isCreditCard ? Number(editAccCreditLimit) : null,
+        soa_day: isCreditCard ? Number(editAccSoaDay) : null,
+        due_day: isCreditCard ? Number(editAccDueDay) : null,
+        last_statement_date: isCreditCard && editAccLastStatementDate ? editAccLastStatementDate : null,
+      })
       setEditingAcc(null)
     } finally {
       setIsSavingAcc(false)
@@ -240,6 +325,34 @@ export default function SettingsPage() {
     ACCOUNT_TYPES.find((t) => t.value === type)?.label
     ?? customAccountTypes.find((t) => t.name === type)?.name
     ?? type
+  const isCreatingCreditCard = isCreditCardType(accType)
+  const isEditingCreditCard = isCreditCardType(editAccType)
+  const createCreditLimit = Number(accCreditLimit)
+  const editCreditLimit = Number(editAccCreditLimit)
+  const createOutstanding = parseFloat(accBalance) || 0
+  const editOutstanding = parseFloat(editAccBalance) || 0
+  const canSaveCreateAccount = Boolean(accName.trim())
+    && (!isCreatingCreditCard
+      || (createCreditLimit > 0
+        && Number(accSoaDay) >= 1
+        && Number(accSoaDay) <= 31
+        && Number(accDueDay) >= 1
+        && Number(accDueDay) <= 31
+        && createOutstanding <= createCreditLimit))
+  const canSaveEditAccount = Boolean(editAccName.trim())
+    && (!isEditingCreditCard
+      || (editCreditLimit > 0
+        && Number(editAccSoaDay) >= 1
+        && Number(editAccSoaDay) <= 31
+        && Number(editAccDueDay) >= 1
+        && Number(editAccDueDay) <= 31
+        && editOutstanding <= editCreditLimit))
+  const createCreditPreview = isCreatingCreditCard
+    ? getCreditCardPreview(accSoaDay, accDueDay, accLastStatementDate)
+    : null
+  const editCreditPreview = isEditingCreditCard
+    ? getCreditCardPreview(editAccSoaDay, editAccDueDay, editAccLastStatementDate)
+    : null
 
   const handleCreateType = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -515,6 +628,11 @@ export default function SettingsPage() {
                       {accountTypeLabel(acc.type)}
                       {isLiab && <span className="ml-1 text-amber-500">· Liability</span>}
                     </p>
+                    {isCreditCardType(acc.type) && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Limit {formatCurrency(acc.credit_limit ?? 0)} · SOA {acc.soa_day ?? '-'} · Due {acc.due_day ?? '-'}
+                      </p>
+                    )}
                   </div>
                   <span className={cn(
                     'text-sm font-bold tabular-nums',
@@ -679,9 +797,9 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold">
-                {accountTypeCategory(accType) === 'liability' ? 'Current Debt (₱)' : 'Current Balance (₱)'}
+                {isCreatingCreditCard ? 'Current Outstanding Balance (₱)' : accountTypeCategory(accType) === 'liability' ? 'Current Debt (₱)' : 'Current Balance (₱)'}
               </Label>
-              {accountTypeCategory(accType) === 'liability' && (
+              {accountTypeCategory(accType) === 'liability' && !isCreatingCreditCard && (
                 <p className="text-[10px] text-muted-foreground">Enter amount currently owed (positive number)</p>
               )}
               <div className="relative">
@@ -694,9 +812,77 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
+            {isCreatingCreditCard && (
+              <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-3">
+                <p className="text-sm font-semibold">Credit Card Details</p>
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold">Credit Limit (₱)</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0.01"
+                      value={accCreditLimit}
+                      onChange={(e) => setAccCreditLimit(e.target.value)}
+                      className="pl-7 h-10 rounded-xl"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold">SOA Day</Label>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max="31"
+                      value={accSoaDay}
+                      onChange={(e) => setAccSoaDay(e.target.value)}
+                      className="h-10 rounded-xl"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold">Due Day</Label>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max="31"
+                      value={accDueDay}
+                      onChange={(e) => setAccDueDay(e.target.value)}
+                      className="h-10 rounded-xl"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold">Last Statement Date</Label>
+                  <Input
+                    type="date"
+                    value={accLastStatementDate}
+                    onChange={(e) => setAccLastStatementDate(e.target.value)}
+                    className="h-10 rounded-xl"
+                  />
+                </div>
+                {createOutstanding > createCreditLimit && createCreditLimit > 0 && (
+                  <p className="text-xs text-destructive">Outstanding balance cannot exceed the credit limit.</p>
+                )}
+                {createCreditPreview && (
+                  <div className="grid grid-cols-1 gap-1.5 text-xs text-muted-foreground">
+                    <p>Current Billing Cycle: <span className="font-medium text-foreground">{formatDateLabel(createCreditPreview.cycleStart)} - {formatDateLabel(createCreditPreview.cycleEnd)}</span></p>
+                    <p>Next Statement Date: <span className="font-medium text-foreground">{formatDateLabel(createCreditPreview.nextStatement)}</span></p>
+                    <p>Next Due Date: <span className="font-medium text-foreground">{formatDateLabel(createCreditPreview.dueDate)}</span></p>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex gap-3">
               <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setShowCreateAcc(false)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingAcc || !accName.trim()}>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingAcc || !canSaveCreateAccount}>
                 {isSavingAcc ? 'Saving…' : 'Add Account'}
               </Button>
             </div>
@@ -780,9 +966,9 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-sm font-semibold">
-                {accountTypeCategory(editAccType) === 'liability' ? 'Current Debt (₱)' : 'Current Balance (₱)'}
+                {isEditingCreditCard ? 'Current Outstanding Balance (₱)' : accountTypeCategory(editAccType) === 'liability' ? 'Current Debt (₱)' : 'Current Balance (₱)'}
               </Label>
-              {accountTypeCategory(editAccType) === 'liability' && (
+              {accountTypeCategory(editAccType) === 'liability' && !isEditingCreditCard && (
                 <p className="text-[10px] text-muted-foreground">Enter amount currently owed (positive number)</p>
               )}
               <div className="relative">
@@ -795,9 +981,77 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
+            {isEditingCreditCard && (
+              <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-3">
+                <p className="text-sm font-semibold">Credit Card Details</p>
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold">Credit Limit (₱)</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0.01"
+                      value={editAccCreditLimit}
+                      onChange={(e) => setEditAccCreditLimit(e.target.value)}
+                      className="pl-7 h-10 rounded-xl"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold">SOA Day</Label>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max="31"
+                      value={editAccSoaDay}
+                      onChange={(e) => setEditAccSoaDay(e.target.value)}
+                      className="h-10 rounded-xl"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold">Due Day</Label>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max="31"
+                      value={editAccDueDay}
+                      onChange={(e) => setEditAccDueDay(e.target.value)}
+                      className="h-10 rounded-xl"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold">Last Statement Date</Label>
+                  <Input
+                    type="date"
+                    value={editAccLastStatementDate}
+                    onChange={(e) => setEditAccLastStatementDate(e.target.value)}
+                    className="h-10 rounded-xl"
+                  />
+                </div>
+                {editOutstanding > editCreditLimit && editCreditLimit > 0 && (
+                  <p className="text-xs text-destructive">Outstanding balance cannot exceed the credit limit.</p>
+                )}
+                {editCreditPreview && (
+                  <div className="grid grid-cols-1 gap-1.5 text-xs text-muted-foreground">
+                    <p>Current Billing Cycle: <span className="font-medium text-foreground">{formatDateLabel(editCreditPreview.cycleStart)} - {formatDateLabel(editCreditPreview.cycleEnd)}</span></p>
+                    <p>Next Statement Date: <span className="font-medium text-foreground">{formatDateLabel(editCreditPreview.nextStatement)}</span></p>
+                    <p>Next Due Date: <span className="font-medium text-foreground">{formatDateLabel(editCreditPreview.dueDate)}</span></p>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex gap-3">
               <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setEditingAcc(null)}>Cancel</Button>
-              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingAcc || !editAccName.trim()}>
+              <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingAcc || !canSaveEditAccount}>
                 {isSavingAcc ? 'Saving…' : 'Save Changes'}
               </Button>
             </div>

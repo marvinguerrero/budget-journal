@@ -17,6 +17,15 @@ interface Props {
   accountId: string
 }
 
+function formatDateLabel(value?: string | null) {
+  if (!value) return 'Not set'
+  return new Date(value + (value.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('en-PH', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 export function AccountDetailClient({ accountId }: Props) {
   const { account, entries, isLoading, moneyIn, moneyOut } = useAccountDetail(accountId)
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
@@ -67,6 +76,7 @@ export function AccountDetailClient({ accountId }: Props) {
   const balanceColor = isLiab
     ? account.balance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
     : account.balance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+  const isCreditCard = account.type === 'credit'
 
   return (
     <div className="p-4 lg:p-6 pb-24 lg:pb-6 space-y-5">
@@ -116,6 +126,34 @@ export function AccountDetailClient({ accountId }: Props) {
             </p>
           </div>
         </div>
+
+        {isCreditCard && (
+          <div className="rounded-xl bg-muted/60 p-3 space-y-2">
+            <p className="text-xs font-semibold">Credit Card Details</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <p className="text-muted-foreground">Credit Limit</p>
+                <p className="font-semibold">{formatCurrency(account.credit_limit ?? 0)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Outstanding</p>
+                <p className="font-semibold">{formatCurrency(Math.abs(account.balance))}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">SOA Day</p>
+                <p className="font-semibold">{account.soa_day ?? '-'}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Due Day</p>
+                <p className="font-semibold">{account.due_day ?? '-'}</p>
+              </div>
+              <div className="col-span-2">
+                <p className="text-muted-foreground">Last Statement Date</p>
+                <p className="font-semibold">{formatDateLabel(account.last_statement_date)}</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Kind filter chips */}

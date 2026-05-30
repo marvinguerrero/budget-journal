@@ -72,6 +72,10 @@ export interface FinancialAccount {
   type: AccountType
   category: AccountCategory
   balance: number
+  credit_limit?: number | null
+  soa_day?: number | null
+  due_day?: number | null
+  last_statement_date?: string | null
   created_at: string
 }
 
@@ -82,6 +86,10 @@ export interface FinancialAccountFormData {
   type: AccountType
   category?: AccountCategory
   balance: number
+  credit_limit?: number | null
+  soa_day?: number | null
+  due_day?: number | null
+  last_statement_date?: string | null
 }
 
 export type IncomeStatus = 'expected' | 'received'
@@ -286,6 +294,10 @@ export interface Expense {
   category: string
   note: string
   account_id?: string | null
+  credit_billing_cycle_start?: string | null
+  credit_billing_cycle_end?: string | null
+  credit_statement_date?: string | null
+  credit_due_date?: string | null
   created_at: string
   personal_obligations?: PersonalObligation[]
 }

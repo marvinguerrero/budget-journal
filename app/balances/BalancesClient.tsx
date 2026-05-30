@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Contact, PersonalObligation, PersonalObligationSettlement, SharedExpenseSettlement } from '@/types'
+import { Contact, Expense, FinancialAccount, PersonalObligation, PersonalObligationSettlement, SharedExpenseSettlement } from '@/types'
 import { getBalancesData, GroupBalanceData } from '@/services/balances'
+import { createAccountTransfer } from '@/services/accountTransfers'
+import { getAllExpenses } from '@/services/expenses'
 import { createSettlement, confirmSettlement, rejectSettlement, recallSettlement, undoConfirmSettlement } from '@/services/settlements'
 import {
   applyPersonalObligationPayment,
@@ -19,6 +21,7 @@ import { formatCurrency } from '@/utils/format'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -26,13 +29,78 @@ import {
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
-  Clock, Undo2,
+  Clock, CreditCard, Undo2,
   TrendingDown, TrendingUp, Wallet, Scale, Users,
 } from 'lucide-react'
 import Link from 'next/link'
 
 interface Props {
   userId: string
+}
+
+type BalancesTab = 'balances' | 'credit_cards'
+
+function daysInMonth(year: number, monthIndex: number) {
+  return new Date(year, monthIndex + 1, 0).getDate()
+}
+
+function dateForDay(year: number, monthIndex: number, day: number) {
+  return new Date(year, monthIndex, Math.min(day, daysInMonth(year, monthIndex)))
+}
+
+function addMonthsForDay(date: Date, months: number, day: number) {
+  return dateForDay(date.getFullYear(), date.getMonth() + months, day)
+}
+
+function formatDateLabel(value?: Date | string | null) {
+  if (!value) return 'Not set'
+  const date = typeof value === 'string' ? new Date(value + (value.length === 10 ? 'T00:00:00' : '')) : value
+  return date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function getCreditCardCycle(account: FinancialAccount, referenceDate = new Date()) {
+  const soa = account.soa_day
+  const due = account.due_day
+  if (!soa || !due) return null
+
+  const lastStatement = account.last_statement_date
+    ? new Date(account.last_statement_date + (account.last_statement_date.length === 10 ? 'T00:00:00' : ''))
+    : null
+  let statementDate: Date
+
+  if (lastStatement) {
+    statementDate = dateForDay(lastStatement.getFullYear(), lastStatement.getMonth() + 1, soa)
+    while (statementDate < referenceDate) statementDate = addMonthsForDay(statementDate, 1, soa)
+  } else {
+    const candidate = dateForDay(referenceDate.getFullYear(), referenceDate.getMonth(), soa)
+    statementDate = referenceDate <= candidate
+      ? candidate
+      : dateForDay(referenceDate.getFullYear(), referenceDate.getMonth() + 1, soa)
+  }
+
+  const previousStatement = dateForDay(statementDate.getFullYear(), statementDate.getMonth() - 1, soa)
+  const cycleStart = new Date(previousStatement)
+  cycleStart.setDate(cycleStart.getDate() + 1)
+  const dueMonthOffset = due > soa ? 0 : 1
+  const dueDate = dateForDay(statementDate.getFullYear(), statementDate.getMonth() + dueMonthOffset, due)
+
+  return { cycleStart, cycleEnd: statementDate, statementDate, dueDate }
+}
+
+function getCreditCardStatus(account: FinancialAccount, dueDate?: Date) {
+  const outstanding = Math.abs(account.balance)
+  if (outstanding <= 0.005) return { label: 'Clear', className: 'text-emerald-700 dark:text-emerald-400 bg-emerald-500/10' }
+  if (!dueDate) return { label: 'Active', className: 'text-blue-700 dark:text-blue-400 bg-blue-500/10' }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const due = new Date(dueDate)
+  due.setHours(0, 0, 0, 0)
+  const diffDays = Math.ceil((due.getTime() - today.getTime()) / 86_400_000)
+
+  if (diffDays < 0) return { label: 'Overdue', className: 'text-rose-700 dark:text-rose-400 bg-rose-500/10' }
+  if (diffDays <= 7) return { label: `Due in ${diffDays}d`, className: 'text-amber-700 dark:text-amber-400 bg-amber-500/10' }
+  return { label: 'Current', className: 'text-blue-700 dark:text-blue-400 bg-blue-500/10' }
 }
 
 // ── Per-group settle target ───────────────────────────────────────────────────
@@ -190,8 +258,10 @@ export function BalancesClient({ userId }: Props) {
   const [personalObligations, setPersonalObligations] = useState<PersonalObligation[]>([])
   const [personalSettlements, setPersonalSettlements] = useState<PersonalObligationSettlement[]>([])
   const [contacts, setContacts] = useState<Contact[]>([])
+  const [expenses, setExpenses] = useState<Expense[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const { accounts } = useFinancialAccounts()
+  const { accounts, reload: reloadAccounts } = useFinancialAccounts()
+  const [activeTab, setActiveTab] = useState<BalancesTab>('balances')
 
   // ── Settle dialog state ───────────────────────────────────────
   const [settleTarget,    setSettleTarget]    = useState<SettleTarget | null>(null)
@@ -209,21 +279,30 @@ export function BalancesClient({ userId }: Props) {
   const [reviewAmount, setReviewAmount] = useState('')
   const [isSavingReview, setIsSavingReview] = useState(false)
 
+  // ── Credit card payment state ───────────────────────────────
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const [payingCard, setPayingCard] = useState<FinancialAccount | null>(null)
+  const [cardPaymentSourceId, setCardPaymentSourceId] = useState('')
+  const [cardPaymentAmount, setCardPaymentAmount] = useState('')
+  const [isSavingCardPayment, setIsSavingCardPayment] = useState(false)
+
   // ── Filter state ──────────────────────────────────────────────
   const [filter, setFilter] = useState<'all' | 'you_owe' | 'owed_to_you'>('all')
 
   const load = useCallback(async () => {
     setIsLoading(true)
     try {
-      const [data, personal, contactData] = await Promise.all([
+      const [data, personal, contactData, expenseData] = await Promise.all([
         getBalancesData(),
         getPersonalObligations(),
         getContacts(),
+        getAllExpenses(),
       ])
       setGroupData(data)
       setPersonalObligations(personal.obligations)
       setPersonalSettlements(personal.settlements)
       setContacts(contactData)
+      setExpenses(expenseData)
     } catch {
       toast.error('Failed to load balances')
     } finally {
@@ -496,6 +575,44 @@ export function BalancesClient({ userId }: Props) {
     [sharedBalanceRecords, filter]
   )
 
+  const creditCards = useMemo(() =>
+    accounts
+      .filter((account) => account.category === 'liability' && account.type === 'credit')
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [accounts]
+  )
+
+  const selectedCard = useMemo(() =>
+    creditCards.find((card) => card.id === selectedCardId) ?? creditCards[0] ?? null,
+    [creditCards, selectedCardId]
+  )
+
+  const selectedCardCycle = useMemo(() =>
+    selectedCard ? getCreditCardCycle(selectedCard) : null,
+    [selectedCard]
+  )
+
+  const selectedCardExpenses = useMemo(() => {
+    if (!selectedCard || !selectedCardCycle) return []
+    const start = new Date(selectedCardCycle.cycleStart)
+    start.setHours(0, 0, 0, 0)
+    const end = new Date(selectedCardCycle.cycleEnd)
+    end.setHours(23, 59, 59, 999)
+
+    return expenses
+      .filter((expense) => {
+        if (expense.account_id !== selectedCard.id) return false
+        const expenseDate = new Date(expense.created_at)
+        return expenseDate >= start && expenseDate <= end
+      })
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }, [expenses, selectedCard, selectedCardCycle])
+
+  const sourceAccounts = useMemo(() =>
+    accounts.filter((account) => account.category !== 'liability'),
+    [accounts]
+  )
+
   // ── Settle handler ────────────────────────────────────────────
   const handleSettle = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -616,6 +733,45 @@ export function BalancesClient({ userId }: Props) {
     }
   }
 
+  const handleCardPayment = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!payingCard) return
+    const amount = Number(cardPaymentAmount)
+
+    if (!cardPaymentSourceId) {
+      toast.error('Please select a source account.')
+      return
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error('Payment amount must be greater than zero')
+      return
+    }
+    if (amount > Math.abs(payingCard.balance) + 0.005) {
+      toast.error('Payment amount cannot exceed the outstanding balance')
+      return
+    }
+
+    setIsSavingCardPayment(true)
+    try {
+      await createAccountTransfer({
+        from_account_id: cardPaymentSourceId,
+        to_account_id: payingCard.id,
+        amount,
+        note: `Credit card payment - ${payingCard.name}`,
+        transferred_at: new Date().toISOString(),
+      })
+      await Promise.all([load(), reloadAccounts()])
+      setPayingCard(null)
+      setCardPaymentSourceId('')
+      setCardPaymentAmount('')
+      toast.success('Credit card payment recorded')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to record payment')
+    } finally {
+      setIsSavingCardPayment(false)
+    }
+  }
+
   const handleRecallPersonal = async (id: string) => {
     try {
       await recallPersonalObligationPayment(id)
@@ -688,6 +844,216 @@ export function BalancesClient({ userId }: Props) {
         <h1 className="text-xl font-bold">Balances</h1>
         <p className="text-sm text-muted-foreground">Personal and shared interpersonal balances</p>
       </div>
+
+      <div className="flex gap-1.5 rounded-2xl bg-muted/60 p-1">
+        {([
+          ['balances', 'Balances'],
+          ['credit_cards', 'Credit Cards'],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setActiveTab(value)}
+            className={cn(
+              'flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors',
+              activeTab === value
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'credit_cards' ? (
+        <div className="space-y-4">
+          {creditCards.length === 0 ? (
+            <div className="text-center py-20 space-y-3">
+              <div className="flex justify-center">
+                <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
+                  <CreditCard className="w-8 h-8 text-muted-foreground" />
+                </div>
+              </div>
+              <p className="font-semibold">No credit cards yet</p>
+              <p className="text-sm text-muted-foreground">
+                Add a Liability · Credit Card account in Settings.
+              </p>
+              <Link
+                href="/settings"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+              >
+                <Wallet className="w-4 h-4" />
+                Go to Settings
+              </Link>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {creditCards.map((card) => {
+                  const cycle = getCreditCardCycle(card)
+                  const outstanding = Math.abs(card.balance)
+                  const limit = card.credit_limit ?? 0
+                  const available = Math.max(0, limit - outstanding)
+                  const status = getCreditCardStatus(card, cycle?.dueDate)
+                  const isSelected = selectedCard?.id === card.id
+
+                  return (
+                    <button
+                      key={card.id}
+                      type="button"
+                      onClick={() => setSelectedCardId(card.id)}
+                      className={cn(
+                        'w-full rounded-2xl border p-4 text-left transition-colors',
+                        isSelected ? 'border-primary bg-primary/5' : 'border-border bg-card hover:bg-accent/30'
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center text-lg flex-shrink-0">
+                          {card.emoji}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold truncate">{card.name}</p>
+                            <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-semibold flex-shrink-0', status.className)}>
+                              {status.label}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
+                            <div>
+                              <p className="text-muted-foreground">Outstanding</p>
+                              <p className="font-bold text-rose-600 dark:text-rose-400">{formatCurrency(outstanding)}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Available Credit</p>
+                              <p className="font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(available)}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Credit Limit</p>
+                              <p className="font-semibold">{formatCurrency(limit)}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Next Due Date</p>
+                              <p className="font-semibold">{formatDateLabel(cycle?.dueDate)}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">SOA Day</p>
+                              <p className="font-semibold">{card.soa_day ?? '-'}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Due Day</p>
+                              <p className="font-semibold">{card.due_day ?? '-'}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {selectedCard && selectedCardCycle && (
+                <div className="rounded-2xl border border-border bg-card p-4 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">{selectedCard.emoji} {selectedCard.name}</p>
+                      <p className="text-xs text-muted-foreground">Current billing cycle and card activity</p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-9 rounded-xl text-xs"
+                      onClick={() => {
+                        setPayingCard(selectedCard)
+                        setCardPaymentAmount(String(Math.abs(selectedCard.balance) || ''))
+                        setCardPaymentSourceId('')
+                      }}
+                      disabled={Math.abs(selectedCard.balance) <= 0.005}
+                    >
+                      Record Payment
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-xl bg-rose-500/10 p-3">
+                      <p className="text-[10px] text-muted-foreground">Outstanding Balance</p>
+                      <p className="text-sm font-bold text-rose-600 dark:text-rose-400">{formatCurrency(Math.abs(selectedCard.balance))}</p>
+                    </div>
+                    <div className="rounded-xl bg-emerald-500/10 p-3">
+                      <p className="text-[10px] text-muted-foreground">Available Credit</p>
+                      <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(Math.max(0, (selectedCard.credit_limit ?? 0) - Math.abs(selectedCard.balance)))}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-muted/60 p-3">
+                      <p className="text-[10px] text-muted-foreground">Credit Limit</p>
+                      <p className="text-sm font-bold">{formatCurrency(selectedCard.credit_limit ?? 0)}</p>
+                    </div>
+                    <div className="rounded-xl bg-muted/60 p-3">
+                      <p className="text-[10px] text-muted-foreground">Due Date</p>
+                      <p className="text-sm font-bold">{formatDateLabel(selectedCardCycle.dueDate)}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <p className="text-muted-foreground">SOA Day</p>
+                      <p className="font-semibold">{selectedCard.soa_day ?? '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Due Day</p>
+                      <p className="font-semibold">{selectedCard.due_day ?? '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Last Statement Date</p>
+                      <p className="font-semibold">{formatDateLabel(selectedCard.last_statement_date)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Current Billing Cycle</p>
+                      <p className="font-semibold">
+                        {formatDateLabel(selectedCardCycle.cycleStart)} - {formatDateLabel(selectedCardCycle.cycleEnd)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold">Current Cycle Expenses</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatCurrency(selectedCardExpenses.reduce((sum, expense) => sum + expense.amount, 0))}
+                      </p>
+                    </div>
+                    {selectedCardExpenses.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center rounded-xl border border-dashed border-border">
+                        No expenses charged in this billing cycle.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {selectedCardExpenses.map((expense) => (
+                          <div key={expense.id} className="flex items-center gap-3 p-3 rounded-xl bg-muted/40">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{expense.note || expense.category}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {expense.category} · {formatDateLabel(expense.created_at)}
+                              </p>
+                            </div>
+                            <p className="text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">
+                              {formatCurrency(expense.amount)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <>
 
       {/* Summary cards */}
       {(combinedOwedToYou > 0 || combinedYouOwe > 0) && (
@@ -1090,6 +1456,96 @@ export function BalancesClient({ userId }: Props) {
           </Link>
         </div>
       )}
+        </>
+      )}
+
+      {/* ── Credit card payment dialog ── */}
+      <Dialog
+        open={!!payingCard}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPayingCard(null)
+            setCardPaymentSourceId('')
+            setCardPaymentAmount('')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Record Credit Card Payment</DialogTitle>
+          </DialogHeader>
+          {payingCard && (
+            <form onSubmit={handleCardPayment} className="space-y-4">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-muted/60 border border-border">
+                <div>
+                  <p className="text-xs text-muted-foreground">Paying card</p>
+                  <p className="text-sm font-semibold">{payingCard.emoji} {payingCard.name}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Outstanding {formatCurrency(Math.abs(payingCard.balance))}
+                  </p>
+                </div>
+                <CreditCard className="w-5 h-5 text-muted-foreground" />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold flex items-center gap-1.5">
+                  <Wallet className="w-3.5 h-3.5" />
+                  Source account
+                </Label>
+                <AccountChips
+                  accounts={sourceAccounts}
+                  value={cardPaymentSourceId}
+                  onChange={setCardPaymentSourceId}
+                  allowNone={false}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Amount</Label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.01"
+                    max={Math.abs(payingCard.balance)}
+                    step="0.01"
+                    value={cardPaymentAmount}
+                    onChange={(e) => setCardPaymentAmount(e.target.value)}
+                    className="pl-8 h-11 rounded-xl font-semibold"
+                    required
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  This deducts from the source account and reduces the credit card outstanding balance.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1 h-11 rounded-xl"
+                  onClick={() => {
+                    setPayingCard(null)
+                    setCardPaymentSourceId('')
+                    setCardPaymentAmount('')
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 h-11 rounded-xl font-semibold"
+                  disabled={isSavingCardPayment || !cardPaymentSourceId || !cardPaymentAmount || Number(cardPaymentAmount) <= 0 || Number(cardPaymentAmount) > Math.abs(payingCard.balance)}
+                >
+                  {isSavingCardPayment ? 'Saving…' : 'Record Payment'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Settle dialog ── */}
       <Dialog
