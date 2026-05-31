@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useExpenses } from '@/hooks/useExpenses'
 import { ExpenseItem } from '@/components/expenses/ExpenseItem'
+import { ExpenseDetailsView } from '@/components/expenses/ExpenseDetailsView'
 import { QuickAddButton } from '@/components/expenses/QuickAddButton'
 import { ExpenseListSkeleton } from '@/components/common/LoadingSkeleton'
 import { Input } from '@/components/ui/input'
@@ -14,12 +16,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+} from '@/components/ui/dialog'
 import { DEFAULT_CATEGORIES, isLiabilityType } from '@/lib/constants'
 import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
 import { exportExpensesToExcel } from '@/utils/exportExcel'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
 import { getExpenseIntegrityIssues } from '@/lib/expenseIntegrity'
+import { Expense } from '@/types'
 import { Search, X, Download } from 'lucide-react'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
@@ -132,6 +140,8 @@ function isExpenseDebugEnabled() {
 }
 
 export default function ExpensesPage() {
+  const router = useRouter()
+  const isMobile = useIsMobile()
   const now = new Date()
   const [month, setMonth] = useState(String(now.getMonth() + 1))
   const [year, setYear] = useState(String(now.getFullYear()))
@@ -140,6 +150,8 @@ export default function ExpensesPage() {
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | 'asset' | 'liability'>('all')
   const [accountFilter, setAccountFilter] = useState('all')
+  const [receiptFilter, setReceiptFilter] = useState<'all' | 'with' | 'without'>('all')
+  const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null)
   const filterSeq = useRef(0)
   const deferredSearch = useDeferredValue(search)
   const debugExpenses = isExpenseDebugEnabled()
@@ -158,7 +170,7 @@ export default function ExpensesPage() {
   const targetMonth = month !== 'all' ? Number(month) : undefined
   const targetYear = year !== 'all' ? Number(year) : undefined
 
-  const { expenses, isLoading, addExpense, updateExpense, deleteExpense } = useExpenses(targetMonth, targetYear)
+  const { expenses, isLoading, refetch, addExpense, updateExpense, deleteExpense } = useExpenses(targetMonth, targetYear)
   const { accounts } = useFinancialAccounts()
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const skipExpenseIntegrity = shouldSkipExpenseIntegrity()
@@ -332,18 +344,29 @@ export default function ExpensesPage() {
         sharedBudgetItem.toLowerCase().includes(query)
       const matchesCategory = categoryFilter === 'all' || e.category === categoryFilter
       const matchesAccount = accountFilter === 'all' || (e.account_id ?? '') === accountFilter
+      const matchesReceipt = receiptFilter === 'all'
+        || (receiptFilter === 'with' ? e.has_receipt === true : e.has_receipt !== true)
       const expAccount = e.account_id ? accountMap.get(e.account_id) : null
       const matchesType = accountTypeFilter === 'all'
         || (accountTypeFilter === 'liability' ? (!!expAccount && isLiabilityType(expAccount.type)) : (!!expAccount && !isLiabilityType(expAccount.type)))
-      return matchesDay && matchesSearch && matchesCategory && matchesAccount && matchesType
+      return matchesDay && matchesSearch && matchesCategory && matchesAccount && matchesReceipt && matchesType
     })
-  }, [safeExpenses, day, deferredSearch, categoryFilter, accountFilter, accountTypeFilter, accountMap])
+  }, [safeExpenses, day, deferredSearch, categoryFilter, accountFilter, receiptFilter, accountTypeFilter, accountMap])
 
   const totalFiltered = filtered.reduce((sum, e) => sum + e.amount, 0)
   const visibleFiltered = useMemo(
     () => filtered.slice(0, MAX_RENDERED_EXPENSES),
     [filtered]
   )
+
+  const handleOpenDetails = (expense: Expense) => {
+    if (isMobile) {
+      router.push(`/expenses/${expense.id}`)
+      return
+    }
+
+    setSelectedExpenseId(expense.id)
+  }
 
   useEffect(() => {
     if (!debugExpenses) return
@@ -356,6 +379,7 @@ export default function ExpensesPage() {
       deferredSearchLength: deferredSearch.length,
       categoryFilter,
       accountFilter,
+      receiptFilter,
       accountTypeFilter,
       sourceCount: expenseList.length,
       safeCount: safeExpenses.length,
@@ -370,6 +394,7 @@ export default function ExpensesPage() {
     deferredSearch,
     categoryFilter,
     accountFilter,
+    receiptFilter,
     accountTypeFilter,
     expenseList.length,
     safeExpenses.length,
@@ -522,6 +547,21 @@ export default function ExpensesPage() {
             </SelectContent>
           </Select>
         </div>
+        <Select value={receiptFilter} onValueChange={(v: string | null) => {
+          const next = (v || 'all') as typeof receiptFilter
+          if (next === receiptFilter) return
+          logFilterChange('receipt', next)
+          setReceiptFilter(next)
+        }}>
+          <SelectTrigger className="h-10 rounded-xl w-full">
+            <SelectValue placeholder="All expenses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All expenses</SelectItem>
+            <SelectItem value="with">With receipt</SelectItem>
+            <SelectItem value="without">Without receipt</SelectItem>
+          </SelectContent>
+        </Select>
         {accounts.length > 0 && (
           <div className="flex gap-2">
             {([
@@ -558,7 +598,7 @@ export default function ExpensesPage() {
           <p className="text-4xl">💸</p>
           <p className="font-semibold">No expenses found</p>
           <p className="text-sm text-muted-foreground">
-            {search || categoryFilter !== 'all' || day !== 'all' || accountFilter !== 'all' || accountTypeFilter !== 'all'
+            {search || categoryFilter !== 'all' || day !== 'all' || accountFilter !== 'all' || receiptFilter !== 'all' || accountTypeFilter !== 'all'
               ? 'Try adjusting your filters'
               : 'Add your first expense!'}
           </p>
@@ -576,6 +616,7 @@ export default function ExpensesPage() {
               expense={expense}
               onUpdate={updateExpense}
               onDelete={deleteExpense}
+              onOpenDetails={handleOpenDetails}
               accounts={accounts}
             />
           ))}
@@ -583,6 +624,26 @@ export default function ExpensesPage() {
       )}
 
       <QuickAddButton onAdd={addExpense} />
+
+      <Dialog open={Boolean(selectedExpenseId)} onOpenChange={(open) => {
+        if (!open) setSelectedExpenseId(null)
+      }}>
+        <DialogContent className="sm:max-w-2xl rounded-2xl max-h-[90vh] overflow-y-auto p-0">
+          {selectedExpenseId ? (
+            <ExpenseDetailsView
+              expenseId={selectedExpenseId}
+              onClose={() => setSelectedExpenseId(null)}
+              onChanged={() => {
+                void refetch()
+              }}
+              onDeleted={() => {
+                setSelectedExpenseId(null)
+                void refetch()
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CategorySelector } from './CategorySelector'
+import { ReceiptField } from './ReceiptField'
 import { AccountSelector } from '@/components/accounts/AccountSelector'
 import { Contact, ExpenseFormData } from '@/types'
 import { getContacts } from '@/services/contacts'
@@ -32,6 +33,8 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
       ? format(new Date(initialData.created_at), 'yyyy-MM-dd')
       : format(new Date(), 'yyyy-MM-dd')
   )
+  const [receiptFile, setReceiptFile] = useState<File | null>(null)
+  const [removeReceipt, setRemoveReceipt] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
@@ -76,6 +79,8 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
         contact_name: isObligation ? selectedContact?.name : undefined,
         contact_email: isObligation ? selectedContact?.email ?? null : undefined,
         contact_user_id: isObligation ? selectedContact?.linked_user_id ?? null : undefined,
+        receipt_file: obligationType === 'i_owe' ? null : receiptFile,
+        remove_receipt: obligationType === 'i_owe' ? false : removeReceipt,
       })
     } catch {
       // Submit handlers show the specific toast; keep the form open without
@@ -208,6 +213,18 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             No account will be deducted now because someone else paid. You can settle this from Balances later.
           </p>
         </div>
+      )}
+
+      {obligationType !== 'i_owe' && (
+        <ReceiptField
+          existingPath={initialData?.receipt_path ?? null}
+          hasExistingReceipt={initialData?.has_receipt === true}
+          selectedFile={receiptFile}
+          removeExisting={removeReceipt}
+          onFileChange={setReceiptFile}
+          onRemoveExistingChange={setRemoveReceipt}
+          disabled={isSubmitting}
+        />
       )}
 
       <div className="flex gap-3 pt-2">

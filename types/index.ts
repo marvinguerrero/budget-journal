@@ -310,8 +310,27 @@ export interface Expense {
   credit_billing_cycle_end?: string | null
   credit_statement_date?: string | null
   credit_due_date?: string | null
+  receipt_path?: string | null
+  has_receipt?: boolean
   created_at: string
+  updated_at?: string | null
   personal_obligations?: PersonalObligation[]
+}
+
+export interface ExpenseSharedBudgetDetails {
+  group_name: string
+  category: string
+  item: string
+  budget_amount: number
+  actual_spent: number
+  remaining_budget: number
+}
+
+export interface ExpenseDetailsData {
+  expense: Expense
+  account: FinancialAccount | null
+  sharedBudget: ExpenseSharedBudgetDetails | null
+  obligation: PersonalObligation | null
 }
 
 export interface Budget {
@@ -346,6 +365,10 @@ export interface ExpenseFormData {
   contact_user_id?: string | null
   contact_name?: string
   contact_email?: string | null
+  receipt_file?: File | null
+  remove_receipt?: boolean
+  receipt_path?: string | null
+  has_receipt?: boolean
 }
 
 export interface BudgetFormData {

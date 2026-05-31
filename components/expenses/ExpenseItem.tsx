@@ -19,17 +19,18 @@ import {
 import { ExpenseForm } from './ExpenseForm'
 import { BottomSheet } from '@/components/common/BottomSheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { MoreHorizontal, Paperclip, Pencil, Trash2 } from 'lucide-react'
 import { FinancialAccount } from '@/types'
 
 interface ExpenseItemProps {
   expense: Expense
   onUpdate: (id: string, data: Partial<ExpenseFormData>) => Promise<unknown>
   onDelete: (id: string) => Promise<unknown>
+  onOpenDetails?: (expense: Expense) => void
   accounts?: FinancialAccount[]
 }
 
-export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: ExpenseItemProps) {
+export function ExpenseItem({ expense, onUpdate, onDelete, onOpenDetails, accounts = [] }: ExpenseItemProps) {
   const [editOpen, setEditOpen] = useState(false)
   const isMobile = useIsMobile()
   const icon = CATEGORY_ICONS[expense.category] || '📦'
@@ -52,7 +53,18 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
 
   return (
     <>
-      <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-card border border-border hover:border-border/80 hover:shadow-sm transition-all duration-200 group">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpenDetails?.(expense)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onOpenDetails?.(expense)
+          }
+        }}
+        className="flex cursor-pointer items-center gap-3 p-3.5 rounded-2xl bg-card border border-border hover:border-border/80 hover:shadow-sm transition-all duration-200 group"
+      >
         <div
           className="w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
           style={{ backgroundColor: color + '15' }}
@@ -79,9 +91,15 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
             {account && (
               <span className="text-xs text-muted-foreground">· {account.emoji} {account.name}</span>
             )}
+            {expense.has_receipt && (
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <Paperclip className="h-3 w-3" />
+                Receipt
+              </span>
+            )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
           <span className="font-bold text-sm tabular-nums">
             {formatCurrency(expense.amount)}
           </span>
@@ -125,6 +143,8 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
                 contact_user_id: obligation?.contact_user_id,
                 contact_name: obligation?.contact_name,
                 contact_email: obligation?.contact_email,
+                receipt_path: expense.receipt_path,
+                has_receipt: expense.has_receipt,
               }}
               isEditing
             />
@@ -151,6 +171,8 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
                   contact_user_id: obligation?.contact_user_id,
                   contact_name: obligation?.contact_name,
                   contact_email: obligation?.contact_email,
+                  receipt_path: expense.receipt_path,
+                  has_receipt: expense.has_receipt,
                 }}
                 isEditing
               />

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client'
-import { Expense, ExpenseFormData } from '@/types'
+import { Expense, ExpenseDetailsData, ExpenseFormData, ExpenseSharedBudgetDetails, FinancialAccount, PersonalObligation } from '@/types'
 import { createPersonalObligation, createRegisteredPersonalObligation } from './personalObligations'
+import { deleteReceiptFile, uploadExpenseReceipt } from './receipts'
 
 const EXPENSE_SELECT = '*, personal_obligations(*)'
 const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
@@ -107,6 +108,54 @@ function toExpenseUpdate(formData: Partial<ExpenseFormData>) {
   }
 }
 
+async function setExpenseReceipt(params: {
+  expense: Pick<Expense, 'id' | 'user_id' | 'created_at' | 'receipt_path'>
+  file: File
+}) {
+  const supabase = createClient()
+  const nextPath = await uploadExpenseReceipt({
+    userId: params.expense.user_id,
+    expenseId: params.expense.id,
+    createdAt: params.expense.created_at,
+    file: params.file,
+  })
+
+  const { error } = await supabase
+    .from('expenses')
+    .update({
+      receipt_path: nextPath,
+      has_receipt: true,
+    })
+    .eq('id', params.expense.id)
+
+  if (error) {
+    await deleteReceiptFile(nextPath)
+    throw error
+  }
+
+  if (params.expense.receipt_path) {
+    await deleteReceiptFile(params.expense.receipt_path)
+  }
+}
+
+async function clearExpenseReceipt(expense: Pick<Expense, 'id' | 'receipt_path'>) {
+  const supabase = createClient()
+
+  if (expense.receipt_path) {
+    await deleteReceiptFile(expense.receipt_path)
+  }
+
+  const { error } = await supabase
+    .from('expenses')
+    .update({
+      receipt_path: null,
+      has_receipt: false,
+    })
+    .eq('id', expense.id)
+
+  if (error) throw error
+}
+
 async function isConnectedRegisteredContact(contactId?: string | null) {
   if (!contactId) return false
 
@@ -193,6 +242,79 @@ export async function getAllExpenses(): Promise<Expense[]> {
   return sanitizeExpenseArray('getAllExpenses', data)
 }
 
+async function getExpenseSharedBudgetDetails(expense: Expense): Promise<ExpenseSharedBudgetDetails | null> {
+  if (!expense.shared_budget_id) return null
+
+  const supabase = createClient()
+  const [budgetRes, spentRes] = await Promise.all([
+    supabase
+      .from('shared_budgets')
+      .select('id, group_id, category, item, amount')
+      .eq('id', expense.shared_budget_id)
+      .maybeSingle(),
+    supabase
+      .from('expenses')
+      .select('amount')
+      .eq('shared_budget_id', expense.shared_budget_id),
+  ])
+
+  if (budgetRes.error) throw budgetRes.error
+  if (spentRes.error) throw spentRes.error
+  if (!budgetRes.data) return null
+
+  const budget = budgetRes.data as {
+    group_id: string
+    category: string
+    item: string
+    amount: number
+  }
+  const groupRes = await supabase
+    .from('shared_groups')
+    .select('name')
+    .eq('id', budget.group_id)
+    .maybeSingle()
+  if (groupRes.error) throw groupRes.error
+
+  const actualSpent = (spentRes.data ?? []).reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
+  const budgetAmount = Number(budget.amount ?? 0)
+
+  return {
+    group_name: groupRes.data?.name ?? 'Shared Group',
+    category: budget.category,
+    item: budget.item,
+    budget_amount: budgetAmount,
+    actual_spent: actualSpent,
+    remaining_budget: budgetAmount - actualSpent,
+  }
+}
+
+export async function getExpenseDetails(id: string): Promise<ExpenseDetailsData> {
+  const supabase = createClient()
+  const expense = await getExpenseById(id)
+
+  const [accountRes, obligationRes, sharedBudget] = await Promise.all([
+    expense.account_id
+      ? supabase.from('financial_accounts').select('*').eq('id', expense.account_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    supabase
+      .from('personal_obligations')
+      .select('*')
+      .eq('source_expense_id', id)
+      .maybeSingle(),
+    getExpenseSharedBudgetDetails(expense),
+  ])
+
+  if (accountRes.error) throw accountRes.error
+  if (obligationRes.error) throw obligationRes.error
+
+  return {
+    expense,
+    account: (accountRes.data ?? null) as FinancialAccount | null,
+    sharedBudget,
+    obligation: (obligationRes.data ?? null) as PersonalObligation | null,
+  }
+}
+
 export async function createExpense(formData: ExpenseFormData): Promise<Expense | null> {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -245,6 +367,18 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
     })
   }
 
+  if (formData.receipt_file) {
+    await setExpenseReceipt({
+      expense: {
+        id: data.id,
+        user_id: user.id,
+        created_at: data.created_at,
+        receipt_path: data.receipt_path ?? null,
+      },
+      file: formData.receipt_file,
+    })
+  }
+
   return getExpenseById(data.id)
 }
 
@@ -272,18 +406,22 @@ export async function updateExpense(id: string, formData: Partial<ExpenseFormDat
     return null
   }
 
-  const { data, error } = await supabase
-    .from('expenses')
-    .update(toExpenseUpdate(formData))
-    .eq('id', id)
-    .select()
-    .single()
-
-  if (error) throw error
+  const baseUpdate = toExpenseUpdate(formData)
+  const data = Object.keys(baseUpdate).length > 0
+    ? await supabase
+      .from('expenses')
+      .update(baseUpdate)
+      .eq('id', id)
+      .select()
+      .single()
+      .then(({ data: updated, error }) => {
+        if (error) throw error
+        return updated
+      })
+    : existing
 
   if (nextType === 'normal') {
     await supabase.from('personal_obligations').delete().eq('source_expense_id', id)
-    return getExpenseById(data.id)
   }
 
   if (nextType === 'owe_me') {
@@ -321,11 +459,26 @@ export async function updateExpense(id: string, formData: Partial<ExpenseFormDat
     }
   }
 
+  const receiptBase = await getExpenseById(data.id)
+  if (formData.receipt_file) {
+    await setExpenseReceipt({
+      expense: receiptBase,
+      file: formData.receipt_file,
+    })
+  } else if (formData.remove_receipt) {
+    await clearExpenseReceipt(receiptBase)
+  }
+
   return getExpenseById(data.id)
 }
 
 export async function deleteExpense(id: string): Promise<void> {
   const supabase = createClient()
+  const existing = await getExpenseById(id)
+  if (existing.receipt_path || existing.has_receipt) {
+    await clearExpenseReceipt(existing)
+  }
+
   const { error } = await supabase.rpc('delete_expense_safely', {
     p_expense_id: id,
   })
