@@ -79,7 +79,6 @@ DECLARE
   v_card financial_accounts;
   v_today date := current_date;
   v_next record;
-  v_previous record;
   v_due_date date;
   v_days_until integer;
   v_reminder_type text;
@@ -108,16 +107,7 @@ BEGIN
     SELECT * INTO v_next
     FROM public.credit_card_schedule(v_today, v_card.soa_day, v_card.due_day);
 
-    SELECT * INTO v_previous
-    FROM public.credit_card_schedule((v_today - interval '1 month')::date, v_card.soa_day, v_card.due_day);
-
     v_due_date := v_next.due_date;
-
-    IF v_previous.due_date IS NOT NULL
-       AND v_today > v_previous.due_date
-       AND v_today < v_next.due_date THEN
-      v_due_date := v_previous.due_date;
-    END IF;
 
     v_days_until := v_due_date - v_today;
     v_reminder_type := NULL;
@@ -139,6 +129,12 @@ BEGIN
       v_reminder_type := 'overdue';
       v_title := 'Credit Card Payment Overdue';
     END IF;
+
+    RAISE LOG 'Credit card due status: Current Date %, Due Date %, Outstanding %, Status %',
+      v_today,
+      v_due_date,
+      v_outstanding,
+      COALESCE(v_reminder_type, 'current');
 
     IF v_reminder_type IS NULL THEN
       CONTINUE;
