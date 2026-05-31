@@ -77,6 +77,8 @@ export interface FinancialAccount {
   soa_day?: number | null
   due_day?: number | null
   last_statement_date?: string | null
+  current_statement_date?: string | null
+  current_due_date?: string | null
   created_at: string
 }
 
@@ -137,6 +139,7 @@ export interface AppNotification {
     | 'contact_request'
     | 'personal_debt_created'
     | 'credit_card_due'
+    | 'credit_card_config'
   title: string
   message: string
   is_read: boolean

@@ -61,11 +61,14 @@ export function DashboardClient({
       .map((account) => {
         const soa = account.soa_day!
         const due = account.due_day!
+        const storedDueDate = account.current_due_date
+          ? new Date(account.current_due_date + (account.current_due_date.length === 10 ? 'T00:00:00' : ''))
+          : null
         const candidateStatement = dateForDay(today.getFullYear(), today.getMonth(), soa)
         const statementDate = today <= candidateStatement
           ? candidateStatement
           : dateForDay(today.getFullYear(), today.getMonth() + 1, soa)
-        const dueDate = dateForDay(statementDate.getFullYear(), statementDate.getMonth() + (due > soa ? 0 : 1), due)
+        const dueDate = storedDueDate ?? dateForDay(statementDate.getFullYear(), statementDate.getMonth() + (due > soa ? 0 : 1), due)
         const daysRemaining = Math.ceil((dueDate.getTime() - today.getTime()) / 86_400_000)
         return { account, dueDate, daysRemaining, amountDue: Math.abs(account.balance) }
       })

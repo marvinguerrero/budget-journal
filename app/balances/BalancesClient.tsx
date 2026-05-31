@@ -58,13 +58,26 @@ function formatDateLabel(value?: Date | string | null) {
   return date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function parseAccountDate(value?: string | null) {
+  return value ? new Date(value + (value.length === 10 ? 'T00:00:00' : '')) : null
+}
+
 function getCreditCardCycle(account: FinancialAccount, referenceDate = new Date()) {
   const soa = account.soa_day
   const due = account.due_day
   if (!soa || !due) return null
 
+  const currentStatement = parseAccountDate(account.current_statement_date)
+  const currentDue = parseAccountDate(account.current_due_date)
+  if (currentStatement && currentDue) {
+    const previousStatement = dateForDay(currentStatement.getFullYear(), currentStatement.getMonth() - 1, soa)
+    const cycleStart = new Date(previousStatement)
+    cycleStart.setDate(cycleStart.getDate() + 1)
+    return { cycleStart, cycleEnd: currentStatement, statementDate: currentStatement, dueDate: currentDue }
+  }
+
   const lastStatement = account.last_statement_date
-    ? new Date(account.last_statement_date + (account.last_statement_date.length === 10 ? 'T00:00:00' : ''))
+    ? parseAccountDate(account.last_statement_date)
     : null
   let statementDate: Date
 
@@ -101,6 +114,15 @@ function getCreditCardStatus(account: FinancialAccount, dueDate?: Date) {
   if (diffDays < 0) return { label: 'Overdue', className: 'text-rose-700 dark:text-rose-400 bg-rose-500/10' }
   if (diffDays <= 7) return { label: `Due in ${diffDays}d`, className: 'text-amber-700 dark:text-amber-400 bg-amber-500/10' }
   return { label: 'Current', className: 'text-blue-700 dark:text-blue-400 bg-blue-500/10' }
+}
+
+function getDaysRemaining(dueDate?: Date | null) {
+  if (!dueDate) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const due = new Date(dueDate)
+  due.setHours(0, 0, 0, 0)
+  return Math.ceil((due.getTime() - today.getTime()) / 86_400_000)
 }
 
 // ── Per-group settle target ───────────────────────────────────────────────────
@@ -977,16 +999,12 @@ export function BalancesClient({ userId }: Props) {
                               <p className="font-semibold">{formatCurrency(limit)}</p>
                             </div>
                             <div>
-                              <p className="text-muted-foreground">Next Due Date</p>
+                              <p className="text-muted-foreground">Statement Date</p>
+                              <p className="font-semibold">{formatDateLabel(cycle?.statementDate)}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Current Due Date</p>
                               <p className="font-semibold">{formatDateLabel(cycle?.dueDate)}</p>
-                            </div>
-                            <div>
-                              <p className="text-muted-foreground">SOA Day</p>
-                              <p className="font-semibold">{card.soa_day ?? '-'}</p>
-                            </div>
-                            <div>
-                              <p className="text-muted-foreground">Due Day</p>
-                              <p className="font-semibold">{card.due_day ?? '-'}</p>
                             </div>
                           </div>
                         </div>
@@ -1049,6 +1067,32 @@ export function BalancesClient({ userId }: Props) {
 
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div>
+                      <p className="text-muted-foreground">Statement Date</p>
+                      <p className="font-semibold">{formatDateLabel(selectedCardCycle.statementDate)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Due Date</p>
+                      <p className="font-semibold">{formatDateLabel(selectedCardCycle.dueDate)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Days Remaining</p>
+                      <p className="font-semibold">
+                        {(() => {
+                          const days = getDaysRemaining(selectedCardCycle.dueDate)
+                          if (days === null) return 'Not set'
+                          if (days < 0) return `${Math.abs(days)}d overdue`
+                          if (days === 0) return 'Due today'
+                          return `${days}d`
+                        })()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Current Billing Cycle</p>
+                      <p className="font-semibold">
+                        {formatDateLabel(selectedCardCycle.cycleStart)} - {formatDateLabel(selectedCardCycle.cycleEnd)}
+                      </p>
+                    </div>
+                    <div>
                       <p className="text-muted-foreground">SOA Day</p>
                       <p className="font-semibold">{selectedCard.soa_day ?? '-'}</p>
                     </div>
@@ -1059,12 +1103,6 @@ export function BalancesClient({ userId }: Props) {
                     <div>
                       <p className="text-muted-foreground">Last Statement Date</p>
                       <p className="font-semibold">{formatDateLabel(selectedCard.last_statement_date)}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Current Billing Cycle</p>
-                      <p className="font-semibold">
-                        {formatDateLabel(selectedCardCycle.cycleStart)} - {formatDateLabel(selectedCardCycle.cycleEnd)}
-                      </p>
                     </div>
                   </div>
 
