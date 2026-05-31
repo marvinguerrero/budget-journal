@@ -3,6 +3,88 @@ import { Expense, ExpenseFormData } from '@/types'
 import { createPersonalObligation, createRegisteredPersonalObligation } from './personalObligations'
 
 const EXPENSE_SELECT = '*, personal_obligations(*)'
+const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
+
+type ExpensePipelineSource =
+  | 'getExpenses'
+  | 'getAllExpenses'
+  | 'getExpenseById'
+  | 'createExpense'
+  | 'updateExpense'
+
+function getExpenseKeys(expense: unknown) {
+  return expense && typeof expense === 'object' ? Object.keys(expense) : []
+}
+
+function getExpenseField(expense: unknown, field: string) {
+  return expense && typeof expense === 'object'
+    ? (expense as Record<string, unknown>)[field]
+    : undefined
+}
+
+function logMalformedExpense(source: ExpensePipelineSource, expense: unknown, index?: number) {
+  if (!DEBUG_EXPENSE_PIPELINE) return
+
+  const keys = getExpenseKeys(expense)
+
+  console.warn('[expenses] malformed expense from service pipeline', {
+    source,
+    index,
+    rawExpense: expense,
+    keys,
+    expenseId: getExpenseField(expense, 'id') ?? null,
+    accountId: getExpenseField(expense, 'account_id') ?? null,
+    amount: getExpenseField(expense, 'amount') ?? null,
+    createdAt: getExpenseField(expense, 'created_at') ?? null,
+    isEmptyObject: Boolean(expense && typeof expense === 'object' && keys.length === 0),
+    isNull: expense === null,
+    isUndefined: expense === undefined,
+    missing: {
+      id: !getExpenseField(expense, 'id'),
+      account_id: !getExpenseField(expense, 'account_id'),
+      amount: getExpenseField(expense, 'amount') === null || getExpenseField(expense, 'amount') === undefined,
+      created_at: !getExpenseField(expense, 'created_at'),
+    },
+  })
+}
+
+function isNonEmptyExpenseObject(expense: unknown): expense is Expense {
+  return Boolean(
+    expense
+      && typeof expense === 'object'
+      && Object.keys(expense).length > 0
+  )
+}
+
+function sanitizeExpenseArray(source: ExpensePipelineSource, data: unknown): Expense[] {
+  if (!Array.isArray(data)) {
+    if (DEBUG_EXPENSE_PIPELINE) {
+      console.warn('[expenses] service received non-array expense payload', {
+        source,
+        type: data === null ? 'null' : typeof data,
+        data,
+      })
+    }
+    return []
+  }
+
+  return data.filter((expense, index): expense is Expense => {
+    const isValidContainer = isNonEmptyExpenseObject(expense)
+    if (!isValidContainer) {
+      logMalformedExpense(source, expense, index)
+    }
+    return isValidContainer
+  })
+}
+
+function sanitizeSingleExpense(source: ExpensePipelineSource, data: unknown): Expense {
+  if (!isNonEmptyExpenseObject(data)) {
+    logMalformedExpense(source, data)
+    throw new Error('Malformed expense record returned from database.')
+  }
+
+  return data
+}
 
 async function getExpenseById(id: string): Promise<Expense> {
   const supabase = createClient()
@@ -12,7 +94,7 @@ async function getExpenseById(id: string): Promise<Expense> {
     .eq('id', id)
     .single()
   if (error) throw error
-  return data
+  return sanitizeSingleExpense('getExpenseById', data)
 }
 
 function toExpenseUpdate(formData: Partial<ExpenseFormData>) {
@@ -70,6 +152,7 @@ async function createObligationForContact(payload: {
 
 export async function getExpenses(month?: number, year?: number): Promise<Expense[]> {
   const supabase = createClient()
+  const startedAt = DEBUG_EXPENSE_PIPELINE ? performance.now() : 0
   let query = supabase
     .from('expenses')
     .select(EXPENSE_SELECT)
@@ -87,7 +170,17 @@ export async function getExpenses(month?: number, year?: number): Promise<Expens
 
   const { data, error } = await query
   if (error) throw error
-  return data || []
+  const expenses = sanitizeExpenseArray('getExpenses', data)
+  if (DEBUG_EXPENSE_PIPELINE) {
+    console.debug('[expenses] service getExpenses:done', {
+      month,
+      year,
+      rawCount: Array.isArray(data) ? data.length : 0,
+      count: expenses.length,
+      durationMs: Math.round(performance.now() - startedAt),
+    })
+  }
+  return expenses
 }
 
 export async function getAllExpenses(): Promise<Expense[]> {
@@ -97,7 +190,7 @@ export async function getAllExpenses(): Promise<Expense[]> {
     .select(EXPENSE_SELECT)
     .order('created_at', { ascending: false })
   if (error) throw error
-  return data || []
+  return sanitizeExpenseArray('getAllExpenses', data)
 }
 
 export async function createExpense(formData: ExpenseFormData): Promise<Expense | null> {

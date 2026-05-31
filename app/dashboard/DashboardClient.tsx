@@ -19,6 +19,8 @@ import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { Wallet, TrendingDown, Calendar, Tag, TrendingUp } from 'lucide-react'
 import { format } from 'date-fns'
 
+const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
+
 interface DashboardClientProps {
   initialExpenses: Expense[]
   initialBudgets: Budget[]
@@ -26,6 +28,50 @@ interface DashboardClientProps {
   userEmail: string
   month: number
   year: number
+}
+
+function getExpenseKeys(expense: unknown) {
+  return expense && typeof expense === 'object' ? Object.keys(expense) : []
+}
+
+function getExpenseField(expense: unknown, field: string) {
+  return expense && typeof expense === 'object'
+    ? (expense as Record<string, unknown>)[field]
+    : undefined
+}
+
+function sanitizeInitialExpenses(expenses: Expense[]) {
+  return expenses.filter((expense, index) => {
+    const keys = getExpenseKeys(expense)
+    const isValidContainer = Boolean(
+      expense
+        && typeof expense === 'object'
+        && keys.length > 0
+    )
+
+    if (!isValidContainer && DEBUG_EXPENSE_PIPELINE) {
+      console.warn('[expenses] malformed expense from dashboard initialExpenses', {
+        index,
+        rawExpense: expense,
+        keys,
+        expenseId: getExpenseField(expense, 'id') ?? null,
+        accountId: getExpenseField(expense, 'account_id') ?? null,
+        amount: getExpenseField(expense, 'amount') ?? null,
+        createdAt: getExpenseField(expense, 'created_at') ?? null,
+        isEmptyObject: Boolean(expense && typeof expense === 'object' && keys.length === 0),
+        isNull: expense === null,
+        isUndefined: expense === undefined,
+        missing: {
+          id: !getExpenseField(expense, 'id'),
+          account_id: !getExpenseField(expense, 'account_id'),
+          amount: getExpenseField(expense, 'amount') === null || getExpenseField(expense, 'amount') === undefined,
+          created_at: !getExpenseField(expense, 'created_at'),
+        },
+      })
+    }
+
+    return isValidContainer
+  })
 }
 
 export function DashboardClient({
@@ -77,7 +123,7 @@ export function DashboardClient({
   }, [accounts])
 
   useEffect(() => {
-    setExpenses(initialExpenses)
+    setExpenses(sanitizeInitialExpenses(initialExpenses))
     setBudgets(initialBudgets)
   }, [initialExpenses, initialBudgets, setExpenses, setBudgets])
 

@@ -3,6 +3,8 @@
 import { create } from 'zustand'
 import { Expense, Budget, Category } from '@/types'
 
+const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
+
 interface ExpenseStore {
   expenses: Expense[]
   budgets: Budget[]
@@ -27,16 +29,87 @@ interface ExpenseStore {
   setLoading: (loading: boolean) => void
 }
 
+function getExpenseKeys(expense: unknown) {
+  return expense && typeof expense === 'object' ? Object.keys(expense) : []
+}
+
+function getExpenseField(expense: unknown, field: string) {
+  return expense && typeof expense === 'object'
+    ? (expense as Record<string, unknown>)[field]
+    : undefined
+}
+
+function logMalformedStoreExpense(source: string, expense: unknown, index?: number) {
+  if (!DEBUG_EXPENSE_PIPELINE) return
+
+  const keys = getExpenseKeys(expense)
+
+  console.warn('[expenses] malformed expense rejected by store', {
+    source,
+    index,
+    rawExpense: expense,
+    keys,
+    expenseId: getExpenseField(expense, 'id') ?? null,
+    accountId: getExpenseField(expense, 'account_id') ?? null,
+    amount: getExpenseField(expense, 'amount') ?? null,
+    createdAt: getExpenseField(expense, 'created_at') ?? null,
+    isEmptyObject: Boolean(expense && typeof expense === 'object' && keys.length === 0),
+    isNull: expense === null,
+    isUndefined: expense === undefined,
+    missing: {
+      id: !getExpenseField(expense, 'id'),
+      account_id: !getExpenseField(expense, 'account_id'),
+      amount: getExpenseField(expense, 'amount') === null || getExpenseField(expense, 'amount') === undefined,
+      created_at: !getExpenseField(expense, 'created_at'),
+    },
+  })
+}
+
+function isNonEmptyExpenseObject(expense: unknown): expense is Expense {
+  return Boolean(
+    expense
+      && typeof expense === 'object'
+      && Object.keys(expense).length > 0
+  )
+}
+
+function sanitizeStoreExpenses(source: string, expenses: Expense[]) {
+  return expenses.filter((expense, index) => {
+    const valid = isNonEmptyExpenseObject(expense)
+    if (!valid) {
+      logMalformedStoreExpense(source, expense, index)
+    }
+    return valid
+  })
+}
+
 export const useExpenseStore = create<ExpenseStore>((set) => ({
   expenses: [],
   budgets: [],
   categories: [],
   isLoading: false,
 
-  setExpenses: (expenses) => set({ expenses }),
-  addExpense: (expense) => set((s) => ({ expenses: [expense, ...s.expenses] })),
+  setExpenses: (expenses) => set({ expenses: sanitizeStoreExpenses('setExpenses', expenses) }),
+  addExpense: (expense) => {
+    if (!isNonEmptyExpenseObject(expense)) {
+      logMalformedStoreExpense('addExpense', expense)
+      return
+    }
+
+    set((s) => ({ expenses: [expense, ...s.expenses] }))
+  },
   updateExpense: (id, updated) =>
-    set((s) => ({ expenses: s.expenses.map((e) => (e.id === id ? { ...e, ...updated } : e)) })),
+    set((s) => ({
+      expenses: s.expenses
+        .map((e) => (e.id === id ? { ...e, ...updated } : e))
+        .filter((expense, index) => {
+          const valid = isNonEmptyExpenseObject(expense)
+          if (!valid) {
+            logMalformedStoreExpense('updateExpense', expense, index)
+          }
+          return valid
+        }),
+    })),
   removeExpense: (id) => set((s) => ({ expenses: s.expenses.filter((e) => e.id !== id) })),
 
   setBudgets: (budgets) => set({ budgets }),

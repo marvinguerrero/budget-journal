@@ -25,7 +25,12 @@ export function useFinancialAccounts() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void load()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [load])
 
   const addAccount = async (form: FinancialAccountFormData): Promise<FinancialAccount | null> => {
     try {

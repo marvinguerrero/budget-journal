@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,7 +19,7 @@ import { useIncomeSources } from '@/hooks/useIncomeSources'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { useFinancialAccountTypes } from '@/hooks/useFinancialAccountTypes'
 import {
-  Sun, Moon, Monitor, LogOut, User, Palette, Layers, Trash2, Pencil, Wallet, AlertTriangle,
+  Sun, Moon, Monitor, LogOut, User, Palette, Layers, Trash2, Pencil, Wallet, AlertTriangle, Bug,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
@@ -436,6 +437,25 @@ export default function SettingsPage() {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Debug */}
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center gap-3">
+          <Bug className="w-4 h-4 text-muted-foreground" />
+          <h2 className="font-semibold text-sm">Debug</h2>
+        </div>
+        <Separator />
+        <Link
+          href="/settings/debug/expenses"
+          className="flex items-center justify-between gap-3 rounded-xl bg-accent/50 px-3 py-2.5 hover:bg-accent transition-colors"
+        >
+          <div>
+            <p className="text-sm font-medium">Expense Integrity Check</p>
+            <p className="text-xs text-muted-foreground">Scan malformed expense records and orphaned references.</p>
+          </div>
+          <span className="text-xs font-semibold text-primary">Open</span>
+        </Link>
       </div>
 
       {/* Categories */}

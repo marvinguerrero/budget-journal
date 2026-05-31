@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useExpenses } from '@/hooks/useExpenses'
 import { ExpenseItem } from '@/components/expenses/ExpenseItem'
 import { QuickAddButton } from '@/components/expenses/QuickAddButton'
@@ -19,6 +19,7 @@ import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
 import { exportExpensesToExcel } from '@/utils/exportExcel'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { cn } from '@/lib/utils'
+import { getExpenseIntegrityIssues } from '@/lib/expenseIntegrity'
 import { Search, X, Download } from 'lucide-react'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
@@ -27,6 +28,108 @@ const MONTHS = Array.from({ length: 12 }, (_, i) => ({
 }))
 
 const YEARS = [2024, 2025, 2026].map(String)
+const MAX_RENDERED_EXPENSES = 250
+
+function getExpenseDebugValue(expense: unknown, key: string) {
+  if (!expense || typeof expense !== 'object') {
+    return undefined
+  }
+
+  return (expense as Record<string, unknown>)[key]
+}
+
+function getExpenseDebugKeys(expense: unknown) {
+  return expense && typeof expense === 'object' ? Object.keys(expense) : []
+}
+
+function getMalformedExpenseDebugInfo(expense: unknown, index: number) {
+  const keys = getExpenseDebugKeys(expense)
+
+  return {
+    index,
+    rawExpense: expense,
+    keys,
+    expenseId: getExpenseDebugValue(expense, 'id') ?? null,
+    accountId: getExpenseDebugValue(expense, 'account_id') ?? null,
+    amount: getExpenseDebugValue(expense, 'amount') ?? null,
+    createdAt: getExpenseDebugValue(expense, 'created_at') ?? null,
+    isEmptyObject: Boolean(expense && typeof expense === 'object' && keys.length === 0),
+    isNull: expense === null,
+    isUndefined: expense === undefined,
+    missing: {
+      id: !getExpenseDebugValue(expense, 'id'),
+      account_id: !getExpenseDebugValue(expense, 'account_id'),
+      amount: getExpenseDebugValue(expense, 'amount') === null || getExpenseDebugValue(expense, 'amount') === undefined,
+      date: !getExpenseDebugValue(expense, 'created_at'),
+    },
+  }
+}
+
+function isExpenseCandidate(expense: unknown) {
+  return Boolean(
+    expense
+      && typeof expense === 'object'
+      && Object.keys(expense).length > 0
+      && typeof getExpenseDebugValue(expense, 'id') === 'string'
+      && typeof getExpenseDebugValue(expense, 'amount') === 'number'
+      && typeof getExpenseDebugValue(expense, 'created_at') === 'string'
+  )
+}
+
+function getErrorDebugInfo(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      errorMessage: error.message,
+      stack: error.stack,
+    }
+  }
+
+  return {
+    errorMessage: String(error),
+    stack: undefined,
+  }
+}
+
+function getValueDebugInfo(value: unknown) {
+  return {
+    type: value === null ? 'null' : typeof value,
+    isArray: Array.isArray(value),
+    value,
+  }
+}
+
+function getExpenseValidationLimit() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const rawLimit = new URLSearchParams(window.location.search).get('expenseLimit')
+    ?? window.localStorage.getItem('expenseValidationLimit')
+  if (!rawLimit) {
+    return null
+  }
+
+  const limit = Number(rawLimit)
+  return Number.isInteger(limit) && limit > 0 ? limit : null
+}
+
+function shouldSkipExpenseIntegrity() {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  return new URLSearchParams(window.location.search).get('skipExpenseIntegrity') === '1'
+}
+
+function isExpenseDebugEnabled() {
+  if (process.env.NODE_ENV === 'production' || typeof window === 'undefined') {
+    return false
+  }
+
+  const params = new URLSearchParams(window.location.search)
+  return params.get('debugExpenses') === '1'
+    || window.localStorage.getItem('debugExpenses') === '1'
+}
 
 export default function ExpensesPage() {
   const now = new Date()
@@ -37,6 +140,20 @@ export default function ExpensesPage() {
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | 'asset' | 'liability'>('all')
   const [accountFilter, setAccountFilter] = useState('all')
+  const filterSeq = useRef(0)
+  const deferredSearch = useDeferredValue(search)
+  const debugExpenses = isExpenseDebugEnabled()
+
+  const logFilterChange = useCallback((name: string, value: unknown) => {
+    if (!debugExpenses) return
+
+    filterSeq.current += 1
+    console.debug('[expenses] filter change', {
+      seq: filterSeq.current,
+      filter: name,
+      value,
+    })
+  }, [debugExpenses])
 
   const targetMonth = month !== 'all' ? Number(month) : undefined
   const targetYear = year !== 'all' ? Number(year) : undefined
@@ -44,6 +161,124 @@ export default function ExpensesPage() {
   const { expenses, isLoading, addExpense, updateExpense, deleteExpense } = useExpenses(targetMonth, targetYear)
   const { accounts } = useFinancialAccounts()
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
+  const skipExpenseIntegrity = shouldSkipExpenseIntegrity()
+  const expenseList = useMemo(() => {
+    if (Array.isArray(expenses)) {
+      return expenses.filter((expense, index) => {
+        const isValidContainer = isExpenseCandidate(expense)
+
+        if (!isValidContainer && debugExpenses) {
+          console.warn(
+            '[expenses] filtering malformed expense before processing',
+            getMalformedExpenseDebugInfo(expense, index)
+          )
+        }
+
+        return isValidContainer
+      })
+    }
+
+    if (debugExpenses) {
+      console.warn('[expenses] expected expenses array; using empty list', getValueDebugInfo(expenses))
+    }
+    return []
+  }, [expenses, debugExpenses])
+  const safeExpenses = useMemo(() => {
+    if (!debugExpenses) {
+      return expenseList
+    }
+
+    const validationLimit = getExpenseValidationLimit()
+    const validationList = validationLimit ? expenseList.slice(0, validationLimit) : expenseList
+
+    console.log('Expense Count', expenseList.length)
+    console.log('Account Count', accounts.length)
+    console.log('[Expense Validation Setup]', {
+      sourceCount: expenseList.length,
+      validationCount: validationList.length,
+      validationLimit,
+      skipExpenseIntegrity,
+      accountCount: accounts.length,
+    })
+
+    if (skipExpenseIntegrity) {
+      console.warn('[expenses] integrity checker bypass enabled via skipExpenseIntegrity=1')
+      return validationList.filter((expense, index) => {
+        if (!expense || typeof expense !== 'object') {
+          console.warn('[expenses] skipping non-object expense without integrity checker', {
+            index,
+            expense,
+          })
+          return false
+        }
+
+        return true
+      })
+    }
+
+    console.time('safeExpenses')
+
+    try {
+      return validationList.filter((expense, index) => {
+        const expenseId = getExpenseDebugValue(expense, 'id') ?? 'missing-id'
+        console.log('[Expense Validation]', index, expenseId)
+
+        try {
+          const issues = getExpenseIntegrityIssues(expense, {
+            accountsById: accountMap,
+          })
+          const errors = issues.filter((issue) => issue.severity === 'error')
+          if (errors.length > 0) {
+            console.warn('[expenses] skipping invalid expense record', {
+              index,
+              rawExpense: expense,
+              keys: getExpenseDebugKeys(expense),
+              expenseId,
+              accountId: getExpenseDebugValue(expense, 'account_id') ?? null,
+              amount: getExpenseDebugValue(expense, 'amount') ?? null,
+              createdAt: getExpenseDebugValue(expense, 'created_at') ?? null,
+              missing: {
+                id: !getExpenseDebugValue(expense, 'id'),
+                account_id: !getExpenseDebugValue(expense, 'account_id'),
+                amount: getExpenseDebugValue(expense, 'amount') === null || getExpenseDebugValue(expense, 'amount') === undefined,
+                date: !getExpenseDebugValue(expense, 'created_at'),
+              },
+              issues: errors,
+              expense,
+            })
+            return false
+          }
+          return true
+        } catch (error) {
+          console.warn('[Expense Validation Failed]', {
+            index,
+            rawExpense: expense,
+            keys: getExpenseDebugKeys(expense),
+            expenseId,
+            accountId: getExpenseDebugValue(expense, 'account_id') ?? null,
+            amount: getExpenseDebugValue(expense, 'amount') ?? null,
+            createdAt: getExpenseDebugValue(expense, 'created_at') ?? null,
+            expense,
+            error,
+            ...getErrorDebugInfo(error),
+          })
+          return false
+        }
+      })
+    } catch (error) {
+      console.warn('[expenses] safeExpenses filter crashed before record validation completed', {
+        sourceCount: expenseList.length,
+        validationCount: validationList.length,
+        validationLimit,
+        accountCount: accounts.length,
+        error,
+        ...getErrorDebugInfo(error),
+      })
+      return []
+    } finally {
+      console.timeEnd('safeExpenses')
+    }
+  }, [expenseList, accountMap, accounts.length, skipExpenseIntegrity, debugExpenses])
   const visibleAccounts = useMemo(() =>
     accountTypeFilter === 'all'
       ? accounts
@@ -57,34 +292,44 @@ export default function ExpensesPage() {
 
   const handleMonthChange = (v: string | null) => {
     if (!v) return
+    if (v === month) return
+    logFilterChange('month', v)
     setMonth(v)
-    setDay('all')
-    setAccountFilter('all')
-    setAccountTypeFilter('all')
+    if (day !== 'all') setDay('all')
+    if (accountFilter !== 'all') setAccountFilter('all')
+    if (accountTypeFilter !== 'all') setAccountTypeFilter('all')
   }
 
   const handleYearChange = (v: string | null) => {
     if (!v) return
+    if (v === year) return
+    logFilterChange('year', v)
     setYear(v)
-    setDay('all')
-    setAccountFilter('all')
-    setAccountTypeFilter('all')
+    if (day !== 'all') setDay('all')
+    if (accountFilter !== 'all') setAccountFilter('all')
+    if (accountTypeFilter !== 'all') setAccountTypeFilter('all')
   }
 
   const handleAccountTypeFilter = (t: 'all' | 'asset' | 'liability') => {
-    setAccountTypeFilter(t)
-    setAccountFilter('all')
+    if (t === accountTypeFilter && accountFilter === 'all') return
+    logFilterChange('accountType', t)
+    if (t !== accountTypeFilter) setAccountTypeFilter(t)
+    if (accountFilter !== 'all') setAccountFilter('all')
   }
 
   const filtered = useMemo(() => {
-    return expenses.filter((e) => {
+    const query = deferredSearch.trim().toLowerCase()
+    return safeExpenses.filter((e) => {
+      const note = typeof e.note === 'string' ? e.note : ''
+      const category = typeof e.category === 'string' ? e.category : ''
+      const sharedBudgetItem = typeof e.shared_budget_item === 'string' ? e.shared_budget_item : ''
       const matchesDay =
         day === 'all' || new Date(e.created_at).getDate() === Number(day)
       const matchesSearch =
-        !search ||
-        e.note.toLowerCase().includes(search.toLowerCase()) ||
-        e.category.toLowerCase().includes(search.toLowerCase()) ||
-        (e.shared_budget_item ?? '').toLowerCase().includes(search.toLowerCase())
+        !query ||
+        note.toLowerCase().includes(query) ||
+        category.toLowerCase().includes(query) ||
+        sharedBudgetItem.toLowerCase().includes(query)
       const matchesCategory = categoryFilter === 'all' || e.category === categoryFilter
       const matchesAccount = accountFilter === 'all' || (e.account_id ?? '') === accountFilter
       const expAccount = e.account_id ? accountMap.get(e.account_id) : null
@@ -92,9 +337,56 @@ export default function ExpensesPage() {
         || (accountTypeFilter === 'liability' ? (!!expAccount && isLiabilityType(expAccount.type)) : (!!expAccount && !isLiabilityType(expAccount.type)))
       return matchesDay && matchesSearch && matchesCategory && matchesAccount && matchesType
     })
-  }, [expenses, day, search, categoryFilter, accountFilter, accountTypeFilter, accountMap])
+  }, [safeExpenses, day, deferredSearch, categoryFilter, accountFilter, accountTypeFilter, accountMap])
 
   const totalFiltered = filtered.reduce((sum, e) => sum + e.amount, 0)
+  const visibleFiltered = useMemo(
+    () => filtered.slice(0, MAX_RENDERED_EXPENSES),
+    [filtered]
+  )
+
+  useEffect(() => {
+    if (!debugExpenses) return
+
+    console.debug('[expenses] filter state', {
+      month,
+      year,
+      day,
+      searchLength: search.length,
+      deferredSearchLength: deferredSearch.length,
+      categoryFilter,
+      accountFilter,
+      accountTypeFilter,
+      sourceCount: expenseList.length,
+      safeCount: safeExpenses.length,
+      filteredCount: filtered.length,
+      renderedCount: visibleFiltered.length,
+    })
+  }, [
+    month,
+    year,
+    day,
+    search,
+    deferredSearch,
+    categoryFilter,
+    accountFilter,
+    accountTypeFilter,
+    expenseList.length,
+    safeExpenses.length,
+    filtered.length,
+    visibleFiltered.length,
+    debugExpenses,
+  ])
+
+  useEffect(() => {
+    if (!debugExpenses) return
+
+    console.debug('[expenses] url parameter updates', {
+      status: 'not used on expenses page',
+      pathname: typeof window === 'undefined' ? null : window.location.pathname,
+      search: typeof window === 'undefined' ? null : window.location.search,
+    })
+  }, [debugExpenses])
 
   return (
     <div className="p-4 lg:p-6 pb-24 lg:pb-6 space-y-5">
@@ -145,7 +437,12 @@ export default function ExpensesPage() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={day} onValueChange={(v: string | null) => setDay(v || 'all')}>
+        <Select value={day} onValueChange={(v: string | null) => {
+          const next = v || 'all'
+          if (next === day) return
+          logFilterChange('day', next)
+          setDay(next)
+        }}>
           <SelectTrigger className="h-10 rounded-xl w-24">
             <SelectValue placeholder="All days" />
           </SelectTrigger>
@@ -164,14 +461,20 @@ export default function ExpensesPage() {
         <Input
           placeholder="Search expenses..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            logFilterChange('search', { length: e.target.value.length })
+            setSearch(e.target.value)
+          }}
           className="pl-9 h-10 rounded-xl"
         />
         {search && (
           <button
             type="button"
             aria-label="Clear search"
-            onClick={() => setSearch('')}
+            onClick={() => {
+              logFilterChange('search', { length: 0 })
+              setSearch('')
+            }}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           >
             <X className="w-4 h-4" />
@@ -182,7 +485,12 @@ export default function ExpensesPage() {
       {/* Category + Account */}
       <div className="space-y-2">
         <div className="flex gap-2">
-          <Select value={categoryFilter} onValueChange={(v: string | null) => setCategoryFilter(v || 'all')}>
+          <Select value={categoryFilter} onValueChange={(v: string | null) => {
+            const next = v || 'all'
+            if (next === categoryFilter) return
+            logFilterChange('category', next)
+            setCategoryFilter(next)
+          }}>
             <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
               <SelectValue placeholder="All categories" />
             </SelectTrigger>
@@ -195,7 +503,12 @@ export default function ExpensesPage() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={accountFilter} onValueChange={(v: string | null) => setAccountFilter(v || 'all')}>
+          <Select value={accountFilter} onValueChange={(v: string | null) => {
+            const next = v || 'all'
+            if (next === accountFilter) return
+            logFilterChange('account', next)
+            setAccountFilter(next)
+          }}>
             <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
               <SelectValue placeholder="All accounts" />
             </SelectTrigger>
@@ -252,7 +565,12 @@ export default function ExpensesPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.map((expense) => (
+          {filtered.length > visibleFiltered.length && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-300">
+              Showing the first {visibleFiltered.length} of {filtered.length} matching expenses. Narrow the filters to see fewer rows.
+            </div>
+          )}
+          {visibleFiltered.map((expense) => (
             <ExpenseItem
               key={expense.id}
               expense={expense}

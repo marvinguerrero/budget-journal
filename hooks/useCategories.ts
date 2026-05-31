@@ -35,7 +35,10 @@ export function useCategories() {
   }, [categories.length, setCategories])
 
   useEffect(() => {
-    fetchCategories()
+    const timer = window.setTimeout(() => {
+      void fetchCategories()
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [fetchCategories])
 
   const handleCreate = async (formData: CategoryFormData) => {

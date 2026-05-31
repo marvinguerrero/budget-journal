@@ -1,32 +1,106 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useExpenseStore } from '@/store/useExpenseStore'
 import { getExpenses, createExpense, updateExpense, deleteExpense } from '@/services/expenses'
 import { getBudgets, createBudget, updateBudget, deleteBudget } from '@/services/budgets'
-import { ExpenseFormData, BudgetFormData } from '@/types'
+import { Expense, ExpenseFormData, BudgetFormData } from '@/types'
 import { getCurrentMonth } from '@/utils/format'
 import { toast } from 'sonner'
+
+const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
+
+function getExpenseKeys(expense: unknown) {
+  return expense && typeof expense === 'object' ? Object.keys(expense) : []
+}
+
+function getExpenseField(expense: unknown, field: string) {
+  return expense && typeof expense === 'object'
+    ? (expense as Record<string, unknown>)[field]
+    : undefined
+}
+
+function logMalformedHookExpense(source: string, expense: unknown, index?: number) {
+  if (!DEBUG_EXPENSE_PIPELINE) return
+
+  const keys = getExpenseKeys(expense)
+
+  console.warn('[expenses] malformed expense entering hook/store handoff', {
+    source,
+    index,
+    rawExpense: expense,
+    keys,
+    expenseId: getExpenseField(expense, 'id') ?? null,
+    accountId: getExpenseField(expense, 'account_id') ?? null,
+    amount: getExpenseField(expense, 'amount') ?? null,
+    createdAt: getExpenseField(expense, 'created_at') ?? null,
+    isEmptyObject: Boolean(expense && typeof expense === 'object' && keys.length === 0),
+    isNull: expense === null,
+    isUndefined: expense === undefined,
+    missing: {
+      id: !getExpenseField(expense, 'id'),
+      account_id: !getExpenseField(expense, 'account_id'),
+      amount: getExpenseField(expense, 'amount') === null || getExpenseField(expense, 'amount') === undefined,
+      created_at: !getExpenseField(expense, 'created_at'),
+    },
+  })
+}
+
+function sanitizeHookExpenses(source: string, data: unknown): Expense[] {
+  if (!Array.isArray(data)) {
+    if (DEBUG_EXPENSE_PIPELINE) {
+      console.warn('[expenses] hook received non-array expenses; using empty list', {
+        source,
+        type: data === null ? 'null' : typeof data,
+        data,
+      })
+    }
+    return []
+  }
+
+  return data.filter((expense, index) => {
+    const isValidContainer = Boolean(
+      expense
+        && typeof expense === 'object'
+        && Object.keys(expense).length > 0
+    )
+    if (!isValidContainer) {
+      logMalformedHookExpense(source, expense, index)
+    }
+    return isValidContainer
+  }) as Expense[]
+}
 
 export function useExpenses(month?: number, year?: number) {
   const { expenses, setExpenses, addExpense, updateExpense: updateStore, removeExpense, isLoading, setLoading } = useExpenseStore()
   const [error, setError] = useState<string | null>(null)
+  const requestSeq = useRef(0)
 
   const fetchExpenses = useCallback(async () => {
+    const requestId = requestSeq.current + 1
+    requestSeq.current = requestId
     setLoading(true)
     setError(null)
     try {
       const data = await getExpenses(month, year)
-      setExpenses(data)
-    } catch (err) {
+      const nextExpenses = sanitizeHookExpenses(`fetch:${requestId}`, data)
+      if (requestId === requestSeq.current) {
+        setExpenses(nextExpenses)
+      }
+    } catch {
       setError('Failed to load expenses')
     } finally {
-      setLoading(false)
+      if (requestId === requestSeq.current) {
+        setLoading(false)
+      }
     }
   }, [month, year, setExpenses, setLoading])
 
   useEffect(() => {
-    fetchExpenses()
+    const timer = window.setTimeout(() => {
+      void fetchExpenses()
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [fetchExpenses])
 
   const handleAddExpense = async (formData: ExpenseFormData) => {
@@ -103,7 +177,10 @@ export function useBudgets(month?: number, year?: number) {
   }, [targetMonth, targetYear, setBudgets])
 
   useEffect(() => {
-    fetchBudgets()
+    const timer = window.setTimeout(() => {
+      void fetchBudgets()
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [fetchBudgets])
 
   const handleAddBudget = async (formData: BudgetFormData) => {

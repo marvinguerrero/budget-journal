@@ -110,23 +110,25 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
 
       {isMobile ? (
         <BottomSheet open={editOpen} onClose={() => setEditOpen(false)} title="Edit Expense">
-          <ExpenseForm
-            onSubmit={handleUpdate}
-            onCancel={() => setEditOpen(false)}
-            initialData={{
-              amount: expense.amount,
-              category: expense.category,
-              note: expense.note,
-              account_id: expense.account_id,
-              created_at: expense.created_at,
-              obligation_type: obligation ? 'owe_me' : 'normal',
-              contact_id: obligation?.contact_id,
-              contact_user_id: obligation?.contact_user_id,
-              contact_name: obligation?.contact_name,
-              contact_email: obligation?.contact_email,
-            }}
-            isEditing
-          />
+          {editOpen ? (
+            <ExpenseForm
+              onSubmit={handleUpdate}
+              onCancel={() => setEditOpen(false)}
+              initialData={{
+                amount: expense.amount,
+                category: expense.category,
+                note: expense.note,
+                account_id: expense.account_id,
+                created_at: expense.created_at,
+                obligation_type: obligation ? 'owe_me' : 'normal',
+                contact_id: obligation?.contact_id,
+                contact_user_id: obligation?.contact_user_id,
+                contact_name: obligation?.contact_name,
+                contact_email: obligation?.contact_email,
+              }}
+              isEditing
+            />
+          ) : null}
         </BottomSheet>
       ) : (
         <Dialog open={editOpen} onOpenChange={setEditOpen}>
@@ -134,23 +136,25 @@ export function ExpenseItem({ expense, onUpdate, onDelete, accounts = [] }: Expe
             <DialogHeader>
               <DialogTitle className="text-xl font-bold">Edit Expense</DialogTitle>
             </DialogHeader>
-            <ExpenseForm
-              onSubmit={handleUpdate}
-              onCancel={() => setEditOpen(false)}
-            initialData={{
-              amount: expense.amount,
-              category: expense.category,
-              note: expense.note,
-              account_id: expense.account_id,
-              created_at: expense.created_at,
-              obligation_type: obligation ? 'owe_me' : 'normal',
-              contact_id: obligation?.contact_id,
-              contact_user_id: obligation?.contact_user_id,
-              contact_name: obligation?.contact_name,
-              contact_email: obligation?.contact_email,
-            }}
-            isEditing
-            />
+            {editOpen ? (
+              <ExpenseForm
+                onSubmit={handleUpdate}
+                onCancel={() => setEditOpen(false)}
+                initialData={{
+                  amount: expense.amount,
+                  category: expense.category,
+                  note: expense.note,
+                  account_id: expense.account_id,
+                  created_at: expense.created_at,
+                  obligation_type: obligation ? 'owe_me' : 'normal',
+                  contact_id: obligation?.contact_id,
+                  contact_user_id: obligation?.contact_user_id,
+                  contact_name: obligation?.contact_name,
+                  contact_email: obligation?.contact_email,
+                }}
+                isEditing
+              />
+            ) : null}
           </DialogContent>
         </Dialog>
       )}

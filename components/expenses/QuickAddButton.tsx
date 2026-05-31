@@ -27,10 +27,6 @@ export function QuickAddButton({ onAdd }: QuickAddButtonProps) {
     setOpen(false)
   }
 
-  const form = (
-    <ExpenseForm onSubmit={handleSubmit} onCancel={() => setOpen(false)} />
-  )
-
   return (
     <>
       <Button
@@ -44,7 +40,7 @@ export function QuickAddButton({ onAdd }: QuickAddButtonProps) {
 
       {isMobile ? (
         <BottomSheet open={open} onClose={() => setOpen(false)} title="Add Expense">
-          {form}
+          {open ? <ExpenseForm onSubmit={handleSubmit} onCancel={() => setOpen(false)} /> : null}
         </BottomSheet>
       ) : (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -52,7 +48,7 @@ export function QuickAddButton({ onAdd }: QuickAddButtonProps) {
             <DialogHeader>
               <DialogTitle className="text-xl font-bold">Add Expense</DialogTitle>
             </DialogHeader>
-            {form}
+            {open ? <ExpenseForm onSubmit={handleSubmit} onCancel={() => setOpen(false)} /> : null}
           </DialogContent>
         </Dialog>
       )}
