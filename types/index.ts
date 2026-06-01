@@ -138,6 +138,9 @@ export interface AppNotification {
     | 'payment_source_pending'
     | 'contact_request'
     | 'personal_debt_created'
+    | 'loan_request'
+    | 'loan_request_approved'
+    | 'loan_request_rejected'
     | 'credit_card_due'
     | 'credit_card_config'
   title: string
@@ -527,6 +530,7 @@ export type LoanType = 'money_lent' | 'money_borrowed'
 export type LoanStatus = 'draft' | 'active' | 'cancelled' | 'fully_paid'
 export type LoanCounterpartyKind = 'registered_user' | 'contact' | 'external'
 export type LoanFeeResponsibility = 'lender' | 'borrower'
+export type LoanRequestStatus = 'pending_approval' | 'approved' | 'rejected' | 'cancelled'
 
 export interface Loan {
   id: string
@@ -543,6 +547,8 @@ export interface Loan {
   transfer_fee: number
   fee_responsibility: LoanFeeResponsibility
   fee_expense_id: string | null
+  loan_request_id?: string | null
+  counterparty_loan_id?: string | null
   amount: number
   paid_amount: number
   remaining_amount: number
@@ -565,6 +571,31 @@ export interface LoanPayment {
   paid_at: string
   note: string
   created_at: string
+}
+
+export interface LoanRequest {
+  id: string
+  borrower_user_id: string
+  lender_user_id: string
+  borrower_account_id: string | null
+  lender_account_id: string | null
+  borrower_name: string
+  borrower_email: string | null
+  lender_name: string
+  lender_email: string | null
+  amount: number
+  principal_amount: number
+  transfer_fee: number
+  fee_responsibility: LoanFeeResponsibility
+  due_date: string | null
+  notes: string
+  status: LoanRequestStatus
+  borrower_loan_id: string | null
+  lender_loan_id: string | null
+  requested_at: string
+  responded_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface LoanFormData {

@@ -1,24 +1,27 @@
 import { createClient } from '@/lib/supabase/client'
-import { Loan, LoanFormData, LoanPayment, LoanPaymentFormData } from '@/types'
+import { Loan, LoanFormData, LoanPayment, LoanPaymentFormData, LoanRequest } from '@/types'
 
-export async function getLoans(): Promise<{ loans: Loan[]; payments: LoanPayment[] }> {
+export async function getLoans(): Promise<{ loans: Loan[]; payments: LoanPayment[]; requests: LoanRequest[] }> {
   const supabase = createClient()
-  const [{ data: loans, error: loansError }, { data: payments, error: paymentsError }] =
+  const [{ data: loans, error: loansError }, { data: payments, error: paymentsError }, { data: requests, error: requestsError }] =
     await Promise.all([
       supabase.from('loans').select('*').order('loan_date', { ascending: false }),
       supabase.from('loan_payments').select('*').order('paid_at', { ascending: false }),
+      supabase.from('loan_requests').select('*').order('requested_at', { ascending: false }),
     ])
 
   if (loansError) throw loansError
   if (paymentsError) throw paymentsError
+  if (requestsError) throw requestsError
 
   return {
     loans: loans ?? [],
     payments: payments ?? [],
+    requests: requests ?? [],
   }
 }
 
-export async function createLoan(form: LoanFormData): Promise<Loan> {
+export async function createLoan(form: LoanFormData): Promise<Loan | null> {
   const supabase = createClient()
   const { data, error } = await supabase.rpc('create_loan', {
     p_loan_type: form.loan_type,
@@ -63,4 +66,29 @@ export async function cancelLoan(id: string): Promise<Loan> {
 
   if (error) throw new Error(error.message)
   return data
+}
+
+export async function approveLoanRequest(requestId: string, lenderAccountId: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.rpc('approve_loan_request', {
+    p_request_id: requestId,
+    p_lender_account_id: lenderAccountId,
+  })
+  if (error) throw new Error(error.message)
+}
+
+export async function rejectLoanRequest(requestId: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.rpc('reject_loan_request', {
+    p_request_id: requestId,
+  })
+  if (error) throw new Error(error.message)
+}
+
+export async function cancelLoanRequest(requestId: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.rpc('cancel_loan_request', {
+    p_request_id: requestId,
+  })
+  if (error) throw new Error(error.message)
 }

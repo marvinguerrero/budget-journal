@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS public.loans (
   fee_responsibility text NOT NULL DEFAULT 'lender'
     CHECK (fee_responsibility IN ('lender', 'borrower')),
   fee_expense_id     uuid REFERENCES public.expenses(id) ON DELETE SET NULL,
+  loan_request_id    uuid,
+  counterparty_loan_id uuid,
   amount             numeric(14, 2) NOT NULL CHECK (amount > 0),
   paid_amount        numeric(14, 2) NOT NULL DEFAULT 0 CHECK (paid_amount >= 0),
   remaining_amount   numeric(14, 2) NOT NULL CHECK (remaining_amount >= 0),
@@ -76,6 +78,12 @@ ALTER TABLE public.loans
 ALTER TABLE public.loans
   ADD COLUMN IF NOT EXISTS fee_expense_id uuid REFERENCES public.expenses(id) ON DELETE SET NULL;
 
+ALTER TABLE public.loans
+  ADD COLUMN IF NOT EXISTS loan_request_id uuid;
+
+ALTER TABLE public.loans
+  ADD COLUMN IF NOT EXISTS counterparty_loan_id uuid;
+
 UPDATE public.loans
 SET status = CASE
   WHEN status = 'paid' THEN 'fully_paid'
@@ -102,16 +110,47 @@ CREATE TABLE IF NOT EXISTS public.loan_payments (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.loan_requests (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  borrower_user_id     uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  lender_user_id       uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  borrower_account_id  uuid REFERENCES public.financial_accounts(id) ON DELETE SET NULL,
+  lender_account_id    uuid REFERENCES public.financial_accounts(id) ON DELETE SET NULL,
+  borrower_name        text NOT NULL,
+  borrower_email       text,
+  lender_name          text NOT NULL,
+  lender_email         text,
+  amount               numeric(14, 2) NOT NULL CHECK (amount > 0),
+  principal_amount     numeric(14, 2) NOT NULL CHECK (principal_amount > 0),
+  transfer_fee         numeric(14, 2) NOT NULL DEFAULT 0 CHECK (transfer_fee >= 0),
+  fee_responsibility   text NOT NULL DEFAULT 'lender'
+    CHECK (fee_responsibility IN ('lender', 'borrower')),
+  due_date             date,
+  notes                text NOT NULL DEFAULT '',
+  status               text NOT NULL DEFAULT 'pending_approval'
+    CHECK (status IN ('pending_approval', 'approved', 'rejected', 'cancelled')),
+  borrower_loan_id     uuid,
+  lender_loan_id       uuid,
+  requested_at         timestamptz NOT NULL DEFAULT now(),
+  responded_at         timestamptz,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_loans_user_status ON public.loans(user_id, status, loan_date DESC);
 CREATE INDEX IF NOT EXISTS idx_loans_account ON public.loans(account_id) WHERE account_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_loans_fee_expense ON public.loans(fee_expense_id) WHERE fee_expense_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_loan_payments_loan ON public.loan_payments(loan_id, paid_at DESC);
+CREATE INDEX IF NOT EXISTS idx_loan_requests_borrower ON public.loan_requests(borrower_user_id, status, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_loan_requests_lender ON public.loan_requests(lender_user_id, status, requested_at DESC);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.loans TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.loan_payments TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.loan_requests TO authenticated;
 
 ALTER TABLE public.loans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.loan_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.loan_requests ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "loans_select" ON public.loans;
 DROP POLICY IF EXISTS "loans_insert" ON public.loans;
@@ -156,6 +195,59 @@ CREATE POLICY "loan_payments_update" ON public.loan_payments
 CREATE POLICY "loan_payments_delete" ON public.loan_payments
   FOR DELETE TO authenticated USING (user_id = (select auth.uid()));
 
+DROP POLICY IF EXISTS "loan_requests_select" ON public.loan_requests;
+DROP POLICY IF EXISTS "loan_requests_insert" ON public.loan_requests;
+DROP POLICY IF EXISTS "loan_requests_update" ON public.loan_requests;
+DROP POLICY IF EXISTS "loan_requests_delete" ON public.loan_requests;
+
+CREATE POLICY "loan_requests_select" ON public.loan_requests
+  FOR SELECT TO authenticated
+  USING (
+    borrower_user_id = (select auth.uid())
+    OR lender_user_id = (select auth.uid())
+  );
+
+CREATE POLICY "loan_requests_insert" ON public.loan_requests
+  FOR INSERT TO authenticated
+  WITH CHECK (borrower_user_id = (select auth.uid()));
+
+CREATE POLICY "loan_requests_update" ON public.loan_requests
+  FOR UPDATE TO authenticated
+  USING (
+    borrower_user_id = (select auth.uid())
+    OR lender_user_id = (select auth.uid())
+  )
+  WITH CHECK (
+    borrower_user_id = (select auth.uid())
+    OR lender_user_id = (select auth.uid())
+  );
+
+CREATE POLICY "loan_requests_delete" ON public.loan_requests
+  FOR DELETE TO authenticated USING (borrower_user_id = (select auth.uid()));
+
+ALTER TABLE public.notifications
+  DROP CONSTRAINT IF EXISTS notifications_type_check;
+
+ALTER TABLE public.notifications
+  ADD CONSTRAINT notifications_type_check
+  CHECK (type IN (
+    'chat_message',
+    'group_invite',
+    'permission_approved',
+    'member_joined',
+    'settlement_received',
+    'settlement_confirmed',
+    'settlement_rejected',
+    'payment_source_pending',
+    'contact_request',
+    'personal_debt_created',
+    'credit_card_due',
+    'credit_card_config',
+    'loan_request',
+    'loan_request_approved',
+    'loan_request_rejected'
+  ));
+
 CREATE OR REPLACE FUNCTION public.set_loans_updated_at()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -171,6 +263,22 @@ DROP TRIGGER IF EXISTS trg_loans_updated_at ON public.loans;
 CREATE TRIGGER trg_loans_updated_at
   BEFORE UPDATE ON public.loans
   FOR EACH ROW EXECUTE FUNCTION public.set_loans_updated_at();
+
+CREATE OR REPLACE FUNCTION public.set_loan_requests_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_loan_requests_updated_at ON public.loan_requests;
+CREATE TRIGGER trg_loan_requests_updated_at
+  BEFORE UPDATE ON public.loan_requests
+  FOR EACH ROW EXECUTE FUNCTION public.set_loan_requests_updated_at();
 
 DROP FUNCTION IF EXISTS public.create_loan(text, text, numeric, uuid, timestamptz, date, text, uuid, uuid, text);
 DROP FUNCTION IF EXISTS public.create_loan(text, text, numeric, uuid, timestamptz, date, text, uuid, uuid, text, text, text);
@@ -204,6 +312,9 @@ DECLARE
   v_transfer_fee numeric(14, 2) := COALESCE(p_transfer_fee, 0);
   v_fee_responsibility text := COALESCE(p_fee_responsibility, 'lender');
   v_total_amount numeric(14, 2);
+  v_borrower_email text;
+  v_lender_email text;
+  v_request_id uuid;
 BEGIN
   IF v_uid IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
   IF p_loan_type NOT IN ('money_lent', 'money_borrowed') THEN RAISE EXCEPTION 'Invalid loan type.'; END IF;
@@ -230,6 +341,65 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Account not found.'; END IF;
 
   v_total_amount := p_amount + CASE WHEN v_fee_responsibility = 'borrower' THEN v_transfer_fee ELSE 0 END;
+
+  IF p_loan_type = 'money_borrowed'
+     AND p_contact_user_id IS NOT NULL
+     AND COALESCE(p_counterparty_kind, 'external') IN ('registered_user', 'contact') THEN
+    SELECT email INTO v_borrower_email
+    FROM public.profiles
+    WHERE id = v_uid;
+
+    SELECT email INTO v_lender_email
+    FROM public.profiles
+    WHERE id = p_contact_user_id;
+
+    INSERT INTO public.loan_requests (
+      borrower_user_id,
+      lender_user_id,
+      borrower_account_id,
+      borrower_name,
+      borrower_email,
+      lender_name,
+      lender_email,
+      amount,
+      principal_amount,
+      transfer_fee,
+      fee_responsibility,
+      due_date,
+      notes,
+      status,
+      requested_at
+    )
+    VALUES (
+      v_uid,
+      p_contact_user_id,
+      p_account_id,
+      COALESCE(v_borrower_email, 'Borrower'),
+      v_borrower_email,
+      btrim(p_person_name),
+      COALESCE(NULLIF(btrim(COALESCE(p_person_email, '')), ''), v_lender_email),
+      v_total_amount,
+      p_amount,
+      v_transfer_fee,
+      v_fee_responsibility,
+      p_due_date,
+      COALESCE(p_notes, ''),
+      'pending_approval',
+      COALESCE(p_loan_date, now())
+    )
+    RETURNING id INTO v_request_id;
+
+    INSERT INTO public.notifications (user_id, type, title, message, related_id)
+    VALUES (
+      p_contact_user_id,
+      'loan_request',
+      'Loan Request',
+      COALESCE(v_borrower_email, 'Someone') || ' wants to borrow ' || to_char(p_amount, 'FM999,999,999,990.00'),
+      v_request_id
+    );
+
+    RETURN NULL;
+  END IF;
 
   INSERT INTO public.loans (
     user_id,
@@ -472,8 +642,268 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.approve_loan_request(uuid, uuid);
+CREATE OR REPLACE FUNCTION public.approve_loan_request(
+  p_request_id uuid,
+  p_lender_account_id uuid
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_request loan_requests;
+  v_lender_account financial_accounts;
+  v_lender_loan_id uuid;
+  v_borrower_loan_id uuid;
+  v_fee_expense_id uuid;
+  v_lender_debit numeric(14, 2);
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+  IF p_lender_account_id IS NULL THEN RAISE EXCEPTION 'Please select a source account.'; END IF;
+
+  SELECT * INTO v_request
+  FROM public.loan_requests
+  WHERE id = p_request_id
+    AND lender_user_id = v_uid
+  FOR UPDATE;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Loan request not found.'; END IF;
+  IF v_request.status != 'pending_approval' THEN RAISE EXCEPTION 'Only pending loan requests can be approved.'; END IF;
+
+  SELECT * INTO v_lender_account
+  FROM public.financial_accounts
+  WHERE id = p_lender_account_id
+    AND user_id = v_uid;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Source account not found.'; END IF;
+
+  v_lender_debit := CASE
+    WHEN v_request.fee_responsibility = 'borrower' THEN v_request.amount
+    ELSE v_request.principal_amount
+  END;
+
+  UPDATE public.financial_accounts
+  SET balance = balance - v_lender_debit
+  WHERE id = p_lender_account_id
+    AND user_id = v_uid;
+
+  UPDATE public.financial_accounts
+  SET balance = balance + v_request.principal_amount
+  WHERE id = v_request.borrower_account_id
+    AND user_id = v_request.borrower_user_id;
+
+  INSERT INTO public.loans (
+    user_id,
+    loan_type,
+    counterparty_kind,
+    person_name,
+    person_email,
+    contact_user_id,
+    account_id,
+    principal_amount,
+    transfer_fee,
+    fee_responsibility,
+    amount,
+    paid_amount,
+    remaining_amount,
+    status,
+    loan_date,
+    due_date,
+    notes,
+    loan_request_id
+  )
+  VALUES (
+    v_uid,
+    'money_lent',
+    'registered_user',
+    COALESCE(v_request.borrower_name, 'Borrower'),
+    v_request.borrower_email,
+    v_request.borrower_user_id,
+    p_lender_account_id,
+    v_request.principal_amount,
+    v_request.transfer_fee,
+    v_request.fee_responsibility,
+    v_request.amount,
+    0,
+    v_request.amount,
+    'active',
+    now(),
+    v_request.due_date,
+    v_request.notes,
+    p_request_id
+  )
+  RETURNING id INTO v_lender_loan_id;
+
+  IF v_request.transfer_fee > 0 AND v_request.fee_responsibility = 'lender' THEN
+    INSERT INTO public.expenses (
+      user_id,
+      amount,
+      category,
+      note,
+      account_id,
+      created_at
+    )
+    VALUES (
+      v_uid,
+      v_request.transfer_fee,
+      'Transfer Fees',
+      'Loan Transfer Fee - ' || v_lender_account.name || ' → ' || COALESCE(v_request.borrower_name, 'Borrower'),
+      p_lender_account_id,
+      now()
+    )
+    RETURNING id INTO v_fee_expense_id;
+
+    UPDATE public.loans
+    SET fee_expense_id = v_fee_expense_id
+    WHERE id = v_lender_loan_id;
+  END IF;
+
+  INSERT INTO public.loans (
+    user_id,
+    loan_type,
+    counterparty_kind,
+    person_name,
+    person_email,
+    contact_user_id,
+    account_id,
+    principal_amount,
+    transfer_fee,
+    fee_responsibility,
+    amount,
+    paid_amount,
+    remaining_amount,
+    status,
+    loan_date,
+    due_date,
+    notes,
+    loan_request_id
+  )
+  VALUES (
+    v_request.borrower_user_id,
+    'money_borrowed',
+    'registered_user',
+    COALESCE(v_request.lender_name, 'Lender'),
+    v_request.lender_email,
+    v_uid,
+    v_request.borrower_account_id,
+    v_request.principal_amount,
+    v_request.transfer_fee,
+    v_request.fee_responsibility,
+    v_request.amount,
+    0,
+    v_request.amount,
+    'active',
+    now(),
+    v_request.due_date,
+    v_request.notes,
+    p_request_id
+  )
+  RETURNING id INTO v_borrower_loan_id;
+
+  UPDATE public.loans
+  SET counterparty_loan_id = v_borrower_loan_id
+  WHERE id = v_lender_loan_id;
+
+  UPDATE public.loans
+  SET counterparty_loan_id = v_lender_loan_id
+  WHERE id = v_borrower_loan_id;
+
+  UPDATE public.loan_requests
+  SET status = 'approved',
+      lender_account_id = p_lender_account_id,
+      lender_loan_id = v_lender_loan_id,
+      borrower_loan_id = v_borrower_loan_id,
+      responded_at = now()
+  WHERE id = p_request_id;
+
+  INSERT INTO public.notifications (user_id, type, title, message, related_id)
+  VALUES (
+    v_request.borrower_user_id,
+    'loan_request_approved',
+    'Loan Approved',
+    COALESCE(v_request.lender_name, 'Your lender') || ' approved your loan request.',
+    p_request_id
+  );
+END;
+$$;
+
+DROP FUNCTION IF EXISTS public.reject_loan_request(uuid);
+CREATE OR REPLACE FUNCTION public.reject_loan_request(p_request_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_request loan_requests;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+
+  SELECT * INTO v_request
+  FROM public.loan_requests
+  WHERE id = p_request_id
+    AND lender_user_id = v_uid
+  FOR UPDATE;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Loan request not found.'; END IF;
+  IF v_request.status != 'pending_approval' THEN RAISE EXCEPTION 'Only pending loan requests can be rejected.'; END IF;
+
+  UPDATE public.loan_requests
+  SET status = 'rejected',
+      responded_at = now()
+  WHERE id = p_request_id;
+
+  INSERT INTO public.notifications (user_id, type, title, message, related_id)
+  VALUES (
+    v_request.borrower_user_id,
+    'loan_request_rejected',
+    'Loan Rejected',
+    COALESCE(v_request.lender_name, 'Your lender') || ' rejected your loan request.',
+    p_request_id
+  );
+END;
+$$;
+
+DROP FUNCTION IF EXISTS public.cancel_loan_request(uuid);
+CREATE OR REPLACE FUNCTION public.cancel_loan_request(p_request_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_request loan_requests;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+
+  SELECT * INTO v_request
+  FROM public.loan_requests
+  WHERE id = p_request_id
+    AND borrower_user_id = v_uid
+  FOR UPDATE;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Loan request not found.'; END IF;
+  IF v_request.status != 'pending_approval' THEN
+    RAISE EXCEPTION 'This loan has already been approved and can no longer be deleted.';
+  END IF;
+
+  UPDATE public.loan_requests
+  SET status = 'cancelled',
+      responded_at = now()
+  WHERE id = p_request_id;
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION public.create_loan(text, text, numeric, uuid, timestamptz, date, text, uuid, uuid, text, text, text, numeric, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.record_loan_payment(uuid, numeric, uuid, timestamptz, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.cancel_loan(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.approve_loan_request(uuid, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.reject_loan_request(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_loan_request(uuid) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';

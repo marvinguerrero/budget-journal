@@ -1,11 +1,11 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Contact, CreditCardPayment, Expense, FinancialAccount, Loan, LoanCounterpartyKind, LoanFeeResponsibility, LoanPayment, LoanType, PersonalObligation, PersonalObligationSettlement, SharedExpenseSettlement } from '@/types'
+import { Contact, CreditCardPayment, Expense, FinancialAccount, Loan, LoanCounterpartyKind, LoanFeeResponsibility, LoanPayment, LoanRequest, LoanType, PersonalObligation, PersonalObligationSettlement, SharedExpenseSettlement } from '@/types'
 import { getBalancesData, GroupBalanceData } from '@/services/balances'
 import { getAllExpenses } from '@/services/expenses'
 import { getCreditCardPayments, recordCreditCardPayment } from '@/services/creditCardPayments'
-import { cancelLoan, createLoan, getLoans, recordLoanPayment } from '@/services/loans'
+import { approveLoanRequest, cancelLoan, cancelLoanRequest, createLoan, getLoans, recordLoanPayment, rejectLoanRequest } from '@/services/loans'
 import { createSettlement, confirmSettlement, rejectSettlement, recallSettlement, undoConfirmSettlement } from '@/services/settlements'
 import {
   applyPersonalObligationPayment,
@@ -413,6 +413,7 @@ export function BalancesClient({ userId }: Props) {
   const [creditCardPayments, setCreditCardPayments] = useState<CreditCardPayment[]>([])
   const [loans, setLoans] = useState<Loan[]>([])
   const [loanPayments, setLoanPayments] = useState<LoanPayment[]>([])
+  const [loanRequests, setLoanRequests] = useState<LoanRequest[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const { accounts, reload: reloadAccounts } = useFinancialAccounts()
   const [activeTab, setActiveTab] = useState<BalancesTab>('overview')
@@ -460,6 +461,8 @@ export function BalancesClient({ userId }: Props) {
   const [loanNotes, setLoanNotes] = useState('')
   const [isSavingLoan, setIsSavingLoan] = useState(false)
   const [payingLoan, setPayingLoan] = useState<Loan | null>(null)
+  const [approvingLoanRequest, setApprovingLoanRequest] = useState<LoanRequest | null>(null)
+  const [loanApprovalAccountId, setLoanApprovalAccountId] = useState('')
   const [loanPaymentAccountId, setLoanPaymentAccountId] = useState('')
   const [loanPaymentAmount, setLoanPaymentAmount] = useState('')
   const [loanPaymentNote, setLoanPaymentNote] = useState('')
@@ -487,6 +490,7 @@ export function BalancesClient({ userId }: Props) {
       setCreditCardPayments(cardPaymentData)
       setLoans(loanData.loans)
       setLoanPayments(loanData.payments)
+      setLoanRequests(loanData.requests)
     } catch {
       toast.error('Failed to load balances')
     } finally {
@@ -909,6 +913,21 @@ export function BalancesClient({ userId }: Props) {
   const creditCardPayableTotal = useMemo(() =>
     creditCardPayableRecords.reduce((sum, item) => sum + item.amount, 0),
     [creditCardPayableRecords]
+  )
+
+  const incomingLoanRequests = useMemo(() =>
+    loanRequests.filter((request) => request.status === 'pending_approval' && request.lender_user_id === userId),
+    [loanRequests, userId]
+  )
+
+  const outgoingLoanRequests = useMemo(() =>
+    loanRequests.filter((request) => request.status === 'pending_approval' && request.borrower_user_id === userId),
+    [loanRequests, userId]
+  )
+
+  const pastLoanRequests = useMemo(() =>
+    loanRequests.filter((request) => request.status !== 'pending_approval'),
+    [loanRequests]
   )
 
   const overviewReceivables = combinedOwedToYou + loanReceivableTotal
@@ -1442,6 +1461,10 @@ export function BalancesClient({ userId }: Props) {
       return
     }
 
+    const createsApprovalRequest = loanType === 'money_borrowed'
+      && Boolean(counterpartyUserId)
+      && (loanPersonType === 'registered_user' || loanPersonType === 'contact')
+
     setIsSavingLoan(true)
     try {
       await createLoan({
@@ -1463,7 +1486,7 @@ export function BalancesClient({ userId }: Props) {
       await Promise.all([load(), reloadAccounts()])
       setShowLoanDialog(false)
       resetLoanForm()
-      toast.success('Loan recorded')
+      toast.success(createsApprovalRequest ? 'Loan request sent' : 'Loan recorded')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to record loan')
     } finally {
@@ -1507,6 +1530,45 @@ export function BalancesClient({ userId }: Props) {
       toast.error(err instanceof Error ? err.message : 'Failed to record payment')
     } finally {
       setIsSavingLoanPayment(false)
+    }
+  }
+
+  const handleApproveLoanRequest = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!approvingLoanRequest) return
+    if (!loanApprovalAccountId) {
+      toast.error('Please select a source account.')
+      return
+    }
+
+    try {
+      await approveLoanRequest(approvingLoanRequest.id, loanApprovalAccountId)
+      await Promise.all([load(), reloadAccounts()])
+      setApprovingLoanRequest(null)
+      setLoanApprovalAccountId('')
+      toast.success('Loan request approved')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to approve request')
+    }
+  }
+
+  const handleRejectLoanRequest = async (request: LoanRequest) => {
+    try {
+      await rejectLoanRequest(request.id)
+      await load()
+      toast.success('Loan request rejected')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reject request')
+    }
+  }
+
+  const handleCancelLoanRequest = async (request: LoanRequest) => {
+    try {
+      await cancelLoanRequest(request.id)
+      await load()
+      toast.success('Loan request cancelled')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to cancel request')
     }
   }
 
@@ -1723,9 +1785,86 @@ export function BalancesClient({ userId }: Props) {
               <p className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-400">{formatCurrency(loanPayableTotal)}</p>
             </div>
           </div>
+          {incomingLoanRequests.length > 0 && (
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-3">
+              <h2 className="text-sm font-semibold text-blue-700 dark:text-blue-400">Loan Requests</h2>
+              <div className="space-y-2">
+                {incomingLoanRequests.map((request) => (
+                  <div key={request.id} className="rounded-xl bg-background border border-border p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{request.borrower_name} wants to borrow</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          Due {formatDateLabel(request.due_date)}{request.notes ? ` · ${request.notes}` : ''}
+                        </p>
+                      </div>
+                      <p className="text-sm font-bold tabular-nums">{formatCurrency(request.principal_amount)}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <p className="text-muted-foreground">Transfer Fee</p>
+                        <p className="font-semibold">{formatCurrency(request.transfer_fee)}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Total Balance</p>
+                        <p className="font-semibold">{formatCurrency(request.amount)}</p>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" size="sm" variant="outline" className="h-8 rounded-lg text-xs" onClick={() => handleRejectLoanRequest(request)}>
+                        Reject
+                      </Button>
+                      <Button type="button" size="sm" className="h-8 rounded-lg text-xs" onClick={() => { setApprovingLoanRequest(request); setLoanApprovalAccountId('') }}>
+                        Approve
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {outgoingLoanRequests.length > 0 && (
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
+              <h2 className="text-sm font-semibold text-amber-700 dark:text-amber-400">Pending Approval</h2>
+              <div className="space-y-2">
+                {outgoingLoanRequests.map((request) => (
+                  <div key={request.id} className="flex items-center justify-between gap-3 rounded-xl bg-background border border-border p-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">Request to {request.lender_name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{formatCurrency(request.principal_amount)} · Due {formatDateLabel(request.due_date)}</p>
+                    </div>
+                    <Button type="button" size="sm" variant="outline" className="h-8 rounded-lg text-xs" onClick={() => handleCancelLoanRequest(request)}>
+                      Cancel
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <BalanceRecordSection title="Money Lent" total={loanReceivableTotal} records={loanReceivableRows} emptyLabel="No money lent loans." />
           <BalanceRecordSection title="Money Borrowed" total={loanPayableTotal} records={loanPayableRows} emptyLabel="No money borrowed loans." />
           <BalanceRecordSection title="Loan History" total={loanHistoryRows.reduce((sum, row) => sum + row.originalAmount, 0)} records={loanHistoryRows} emptyLabel="No cancelled or fully paid loans." />
+
+          {pastLoanRequests.length > 0 && (
+            <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+              <h2 className="text-sm font-semibold">Request History</h2>
+              <div className="space-y-2">
+                {pastLoanRequests.map((request) => (
+                  <div key={request.id} className="flex items-center justify-between gap-3 rounded-xl bg-muted/40 p-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">
+                        {request.borrower_user_id === userId ? `Request to ${request.lender_name}` : `Request from ${request.borrower_name}`}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">{balanceStatusLabel(request.status)} · {formatDateLabel(request.responded_at ?? request.requested_at)}</p>
+                    </div>
+                    <p className="text-sm font-bold tabular-nums">{formatCurrency(request.amount)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {loanPayments.length > 0 && (
             <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
@@ -2770,6 +2909,52 @@ export function BalancesClient({ userId }: Props) {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Loan request approval dialog ── */}
+      <Dialog
+        open={!!approvingLoanRequest}
+        onOpenChange={(open) => {
+          if (!open) {
+            setApprovingLoanRequest(null)
+            setLoanApprovalAccountId('')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Approve Loan Request</DialogTitle>
+          </DialogHeader>
+          {approvingLoanRequest && (
+            <form onSubmit={handleApproveLoanRequest} className="space-y-4">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-muted/60 border border-border">
+                <div>
+                  <p className="text-xs text-muted-foreground">Borrower</p>
+                  <p className="text-sm font-semibold">{approvingLoanRequest.borrower_name}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Due {formatDateLabel(approvingLoanRequest.due_date)}</p>
+                </div>
+                <span className="text-xl font-bold tabular-nums">{formatCurrency(approvingLoanRequest.principal_amount)}</span>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Source Account</Label>
+                <AccountChips accounts={sourceAccounts} value={loanApprovalAccountId} onChange={setLoanApprovalAccountId} allowNone={false} />
+                <p className="text-xs text-muted-foreground">
+                  This transfers funds and creates active loan balances for both users.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => { setApprovingLoanRequest(null); setLoanApprovalAccountId('') }}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={!loanApprovalAccountId}>
+                  Approve
+                </Button>
+              </div>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 

@@ -31,6 +31,9 @@ const TYPE_ICON: Record<string, string> = {
   payment_source_pending: '💳',
   contact_request:         '🤝',
   personal_debt_created:   '🧾',
+  loan_request:            '🏦',
+  loan_request_approved:   '✅',
+  loan_request_rejected:   '❌',
   credit_card_due:         '💳',
   credit_card_config:      '⚠️',
 }
@@ -81,13 +84,15 @@ export function NotificationBell() {
       router.push(
         n.type === 'contact_request'
           ? '/shared/contacts'
-          : n.type === 'personal_debt_created'
-            ? '/balances'
-            : n.type === 'credit_card_due'
-              ? `/balances?tab=credit_cards&card=${n.related_id}`
-              : n.type === 'credit_card_config'
-                ? `/balances?tab=credit_cards&card=${n.related_id}`
-                : `/shared/${n.related_id}`
+            : n.type === 'personal_debt_created'
+              ? '/balances'
+              : n.type === 'loan_request' || n.type === 'loan_request_approved' || n.type === 'loan_request_rejected'
+                ? '/balances?tab=loans'
+                : n.type === 'credit_card_due'
+                  ? `/balances?tab=credit_cards&card=${n.related_id}`
+                  : n.type === 'credit_card_config'
+                    ? `/balances?tab=credit_cards&card=${n.related_id}`
+                    : `/shared/${n.related_id}`
       )
     }
   }
