@@ -1,17 +1,20 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Contact, CreditCardPayment, Expense, FinancialAccount, PersonalObligation, PersonalObligationSettlement, SharedExpenseSettlement } from '@/types'
+import { Contact, CreditCardPayment, Expense, FinancialAccount, Loan, LoanCounterpartyKind, LoanFeeResponsibility, LoanPayment, LoanType, PersonalObligation, PersonalObligationSettlement, SharedExpenseSettlement } from '@/types'
 import { getBalancesData, GroupBalanceData } from '@/services/balances'
 import { getAllExpenses } from '@/services/expenses'
 import { getCreditCardPayments, recordCreditCardPayment } from '@/services/creditCardPayments'
+import { createLoan, getLoans, recordLoanPayment } from '@/services/loans'
 import { createSettlement, confirmSettlement, rejectSettlement, recallSettlement, undoConfirmSettlement } from '@/services/settlements'
 import {
   applyPersonalObligationPayment,
   confirmPersonalObligationPayment,
   getPersonalObligations,
+  PersonalContactOption,
   recordExternalPersonalObligationPayment,
   recallPersonalObligationPayment,
+  searchProfiles,
   undoConfirmPersonalObligationPayment,
 } from '@/services/personalObligations'
 import { getContacts } from '@/services/contacts'
@@ -29,7 +32,7 @@ import {
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
-  Clock, CreditCard, Undo2,
+  Clock, CreditCard, Plus, Undo2,
   TrendingDown, TrendingUp, Wallet, Scale, Users,
 } from 'lucide-react'
 import Link from 'next/link'
@@ -38,7 +41,7 @@ interface Props {
   userId: string
 }
 
-type BalancesTab = 'balances' | 'credit_cards'
+type BalancesTab = 'overview' | 'receivables' | 'payables' | 'loans' | 'credit_cards' | 'settlements'
 
 function daysInMonth(year: number, monthIndex: number) {
   return new Date(year, monthIndex + 1, 0).getDate()
@@ -123,6 +126,22 @@ function getDaysRemaining(dueDate?: Date | null) {
   const due = new Date(dueDate)
   due.setHours(0, 0, 0, 0)
   return Math.ceil((due.getTime() - today.getTime()) / 86_400_000)
+}
+
+function balanceStatusLabel(status: string) {
+  return status.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')
+}
+
+function shortName(email: string) {
+  return email.split('@')[0]
+}
+
+function getLoanPrincipal(loan: Loan) {
+  return Number(loan.principal_amount ?? loan.amount)
+}
+
+function getLoanTransferFee(loan: Loan) {
+  return Number(loan.transfer_fee ?? 0)
 }
 
 // ── Per-group settle target ───────────────────────────────────────────────────
@@ -234,6 +253,98 @@ function ConfirmedSettlementRow({
   )
 }
 
+function BalanceRecordSection({
+  title,
+  total,
+  records,
+  emptyLabel,
+}: {
+  title: string
+  total: number
+  records: BalanceListRecord[]
+  emptyLabel: string
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <span className="text-sm font-bold tabular-nums">{formatCurrency(total)}</span>
+      </div>
+      {records.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-4 text-center rounded-xl border border-dashed border-border">
+          {emptyLabel}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {records.map((record) => (
+            <div key={record.id} className="rounded-xl bg-muted/40 p-3 space-y-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">{record.person}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {record.balanceType}{record.note ? ` · ${record.note}` : ''}
+                  </p>
+                </div>
+                <p className={cn(
+                  'text-sm font-bold tabular-nums flex-shrink-0',
+                  record.direction === 'receivable'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-amber-600 dark:text-amber-400'
+                )}>
+                  {formatCurrency(record.remainingAmount)}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <p className="text-muted-foreground">Original</p>
+                  <p className="font-semibold">{formatCurrency(record.originalAmount)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Remaining</p>
+                  <p className="font-semibold">{formatCurrency(record.remainingAmount)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Status</p>
+                  <p className="font-semibold">{record.status}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Due Date</p>
+                  <p className="font-semibold">{formatDateLabel(record.dueDate)}</p>
+                </div>
+              </div>
+              {record.principalAmount !== undefined && (
+                <div className="grid grid-cols-2 gap-2 rounded-lg bg-background/70 p-2 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">Principal Amount</p>
+                    <p className="font-semibold">{formatCurrency(record.principalAmount)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Transfer Fee</p>
+                    <p className="font-semibold">{formatCurrency(record.transferFee ?? 0)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Fee Responsibility</p>
+                    <p className="font-semibold">{record.feeResponsibility === 'borrower' ? 'Borrower' : 'Lender'}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Total Loan Balance</p>
+                    <p className="font-semibold">{formatCurrency(record.totalLoanBalance ?? record.originalAmount)}</p>
+                  </div>
+                </div>
+              )}
+              {record.action && (
+                <div className="flex justify-end">
+                  {record.action}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Aggregated view per counterparty ─────────────────────────────────────────
 interface PersonBalance {
   counterpartyId: string
@@ -274,6 +385,24 @@ type ActiveBalanceRecord =
       obligation: PersonalObligation
     }
 
+type BalanceListRecord = {
+  id: string
+  source: 'expense' | 'manual' | 'loan' | 'credit_card'
+  direction: 'receivable' | 'payable'
+  person: string
+  balanceType: string
+  originalAmount: number
+  remainingAmount: number
+  status: string
+  dueDate?: string | null
+  note?: string
+  principalAmount?: number
+  transferFee?: number
+  feeResponsibility?: LoanFeeResponsibility
+  totalLoanBalance?: number
+  action?: React.ReactNode
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export function BalancesClient({ userId }: Props) {
   const [groupData, setGroupData] = useState<GroupBalanceData[]>([])
@@ -282,9 +411,11 @@ export function BalancesClient({ userId }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [creditCardPayments, setCreditCardPayments] = useState<CreditCardPayment[]>([])
+  const [loans, setLoans] = useState<Loan[]>([])
+  const [loanPayments, setLoanPayments] = useState<LoanPayment[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const { accounts, reload: reloadAccounts } = useFinancialAccounts()
-  const [activeTab, setActiveTab] = useState<BalancesTab>('balances')
+  const [activeTab, setActiveTab] = useState<BalancesTab>('overview')
 
   // ── Settle dialog state ───────────────────────────────────────
   const [settleTarget,    setSettleTarget]    = useState<SettleTarget | null>(null)
@@ -309,18 +440,44 @@ export function BalancesClient({ userId }: Props) {
   const [cardPaymentAmount, setCardPaymentAmount] = useState('')
   const [isSavingCardPayment, setIsSavingCardPayment] = useState(false)
 
+  // ── Loan state ──────────────────────────────────────────────
+  const [showLoanDialog, setShowLoanDialog] = useState(false)
+  const [loanType, setLoanType] = useState<LoanType>('money_lent')
+  const [loanPersonType, setLoanPersonType] = useState<LoanCounterpartyKind>('external')
+  const [loanPersonName, setLoanPersonName] = useState('')
+  const [loanPersonEmail, setLoanPersonEmail] = useState('')
+  const [loanPersonPhone, setLoanPersonPhone] = useState('')
+  const [loanContactId, setLoanContactId] = useState('')
+  const [loanRegisteredQuery, setLoanRegisteredQuery] = useState('')
+  const [loanRegisteredResults, setLoanRegisteredResults] = useState<PersonalContactOption[]>([])
+  const [loanRegisteredUser, setLoanRegisteredUser] = useState<PersonalContactOption | null>(null)
+  const [loanAmount, setLoanAmount] = useState('')
+  const [loanTransferFee, setLoanTransferFee] = useState('0')
+  const [loanFeeResponsibility, setLoanFeeResponsibility] = useState<LoanFeeResponsibility>('lender')
+  const [loanAccountId, setLoanAccountId] = useState('')
+  const [loanDate, setLoanDate] = useState(new Date().toISOString().slice(0, 10))
+  const [loanDueDate, setLoanDueDate] = useState('')
+  const [loanNotes, setLoanNotes] = useState('')
+  const [isSavingLoan, setIsSavingLoan] = useState(false)
+  const [payingLoan, setPayingLoan] = useState<Loan | null>(null)
+  const [loanPaymentAccountId, setLoanPaymentAccountId] = useState('')
+  const [loanPaymentAmount, setLoanPaymentAmount] = useState('')
+  const [loanPaymentNote, setLoanPaymentNote] = useState('')
+  const [isSavingLoanPayment, setIsSavingLoanPayment] = useState(false)
+
   // ── Filter state ──────────────────────────────────────────────
   const [filter, setFilter] = useState<'all' | 'you_owe' | 'owed_to_you'>('all')
 
   const load = useCallback(async () => {
     setIsLoading(true)
     try {
-      const [data, personal, contactData, expenseData, cardPaymentData] = await Promise.all([
+      const [data, personal, contactData, expenseData, cardPaymentData, loanData] = await Promise.all([
         getBalancesData(),
         getPersonalObligations(),
         getContacts(),
         getAllExpenses(),
         getCreditCardPayments(),
+        getLoans(),
       ])
       setGroupData(data)
       setPersonalObligations(personal.obligations)
@@ -328,6 +485,8 @@ export function BalancesClient({ userId }: Props) {
       setContacts(contactData)
       setExpenses(expenseData)
       setCreditCardPayments(cardPaymentData)
+      setLoans(loanData.loans)
+      setLoanPayments(loanData.payments)
     } catch {
       toast.error('Failed to load balances')
     } finally {
@@ -339,14 +498,35 @@ export function BalancesClient({ userId }: Props) {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('tab') === 'credit_cards') {
-      setActiveTab('credit_cards')
+    const tab = params.get('tab')
+    if (tab === 'overview' || tab === 'receivables' || tab === 'payables' || tab === 'loans' || tab === 'credit_cards' || tab === 'settlements') {
+      setActiveTab(tab)
     }
     const cardId = params.get('card')
     if (cardId) {
       setSelectedCardId(cardId)
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (loanPersonType !== 'registered_user' || loanRegisteredQuery.trim().length < 2) {
+      setLoanRegisteredResults([])
+      return
+    }
+
+    searchProfiles(loanRegisteredQuery)
+      .then((results) => {
+        if (!cancelled) setLoanRegisteredResults(results)
+      })
+      .catch(() => {
+        if (!cancelled) setLoanRegisteredResults([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [loanPersonType, loanRegisteredQuery])
 
   // ── All settlements flat list (for pending confirmation section) ─
   const allSettlements = useMemo(() =>
@@ -680,6 +860,308 @@ export function BalancesClient({ userId }: Props) {
     [accounts]
   )
 
+  const activeLoans = useMemo(() =>
+    loans
+      .filter((loan) => loan.status !== 'paid' && loan.remaining_amount > 0.005)
+      .sort((a, b) => new Date(b.loan_date).getTime() - new Date(a.loan_date).getTime()),
+    [loans]
+  )
+
+  const loanReceivables = useMemo(() =>
+    activeLoans.filter((loan) => loan.loan_type === 'money_lent'),
+    [activeLoans]
+  )
+
+  const loanPayables = useMemo(() =>
+    activeLoans.filter((loan) => loan.loan_type === 'money_borrowed'),
+    [activeLoans]
+  )
+
+  const creditCardPayableRecords = useMemo(() =>
+    creditCards
+      .map((card) => ({
+        card,
+        amount: Math.max(0, Math.abs(card.balance)),
+        status: getCreditCardStatus(card, getCreditCardCycle(card)?.dueDate).label,
+        dueDate: getCreditCardCycle(card)?.dueDate ?? null,
+      }))
+      .filter((item) => item.amount > 0.005),
+    [creditCards]
+  )
+
+  const loanReceivableTotal = useMemo(() =>
+    loanReceivables.reduce((sum, loan) => sum + loan.remaining_amount, 0),
+    [loanReceivables]
+  )
+
+  const loanPayableTotal = useMemo(() =>
+    loanPayables.reduce((sum, loan) => sum + loan.remaining_amount, 0),
+    [loanPayables]
+  )
+
+  const creditCardPayableTotal = useMemo(() =>
+    creditCardPayableRecords.reduce((sum, item) => sum + item.amount, 0),
+    [creditCardPayableRecords]
+  )
+
+  const overviewReceivables = combinedOwedToYou + loanReceivableTotal
+  const overviewPayables = combinedYouOwe + loanPayableTotal + creditCardPayableTotal
+  const netPosition = overviewReceivables - overviewPayables
+
+  const expenseReceivableRows = useMemo((): BalanceListRecord[] => {
+    const sharedRows: BalanceListRecord[] = sharedBalanceRecords
+      .filter((record) => record.direction === 'receivable')
+      .map(({ balance, amount }) => ({
+        id: `shared-${balance.counterpartyId}`,
+        source: 'expense',
+        direction: 'receivable',
+        person: shortName(balance.counterpartyEmail),
+        balanceType: 'Shared Expense',
+        originalAmount: amount,
+        remainingAmount: amount,
+        status: 'Open',
+        note: balance.byGroup.map((group) => group.groupName).join(', '),
+      }))
+
+    const personalRows: BalanceListRecord[] = personalBalanceRecords
+      .filter(({ obligation }) => obligation.direction === 'owed_to_user' && obligation.source_expense_id)
+      .map(({ obligation }) => ({
+        id: `personal-${obligation.id}`,
+        source: 'expense',
+        direction: 'receivable',
+        person: obligation.contact_name,
+        balanceType: obligation.category || 'Personal Expense',
+        originalAmount: obligation.amount,
+        remainingAmount: obligation.display_remaining_amount,
+        status: balanceStatusLabel(obligation.lifecycle_status),
+        note: obligation.note,
+        action: obligation.resolved_contact_type === 'external' ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 rounded-lg text-xs"
+            onClick={() => {
+              setPersonalTarget({ obligation })
+              setPersonalAccountId('')
+              setPersonalNote('')
+            }}
+          >
+            Record Received
+          </Button>
+        ) : undefined,
+      }))
+
+    return [...sharedRows, ...personalRows]
+  }, [personalBalanceRecords, sharedBalanceRecords])
+
+  const manualReceivableRows = useMemo((): BalanceListRecord[] =>
+    personalBalanceRecords
+      .filter(({ obligation }) => obligation.direction === 'owed_to_user' && !obligation.source_expense_id)
+      .map(({ obligation }) => ({
+        id: `manual-${obligation.id}`,
+        source: 'manual',
+        direction: 'receivable',
+        person: obligation.contact_name,
+        balanceType: obligation.category || 'Manual Receivable',
+        originalAmount: obligation.amount,
+        remainingAmount: obligation.display_remaining_amount,
+        status: balanceStatusLabel(obligation.lifecycle_status),
+        dueDate: null,
+        note: obligation.note,
+        action: obligation.resolved_contact_type === 'external' ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 rounded-lg text-xs"
+            onClick={() => {
+              setPersonalTarget({ obligation })
+              setPersonalAccountId('')
+              setPersonalNote('')
+            }}
+          >
+            Record Received
+          </Button>
+        ) : undefined,
+      })),
+    [personalBalanceRecords]
+  )
+
+  const loanReceivableRows = useMemo((): BalanceListRecord[] =>
+    loanReceivables.map((loan) => ({
+      id: `loan-${loan.id}`,
+      source: 'loan',
+      direction: 'receivable',
+      person: loan.person_name,
+      balanceType: 'Personal Loan',
+      originalAmount: loan.amount,
+      remainingAmount: loan.remaining_amount,
+      status: balanceStatusLabel(loan.status),
+      dueDate: loan.due_date,
+      note: loan.notes,
+      principalAmount: getLoanPrincipal(loan),
+      transferFee: getLoanTransferFee(loan),
+      feeResponsibility: loan.fee_responsibility ?? 'lender',
+      totalLoanBalance: loan.amount,
+      action: (
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 rounded-lg text-xs"
+          onClick={() => {
+            setPayingLoan(loan)
+            setLoanPaymentAmount(String(loan.remaining_amount))
+            setLoanPaymentAccountId('')
+            setLoanPaymentNote('')
+          }}
+        >
+          Record Payment
+        </Button>
+      ),
+    })),
+    [loanReceivables]
+  )
+
+  const expensePayableRows = useMemo((): BalanceListRecord[] => {
+    const sharedRows: BalanceListRecord[] = sharedBalanceRecords
+      .filter((record) => record.direction === 'payable')
+      .map(({ balance, amount }) => ({
+        id: `shared-${balance.counterpartyId}`,
+        source: 'expense',
+        direction: 'payable',
+        person: shortName(balance.counterpartyEmail),
+        balanceType: 'Shared Expense',
+        originalAmount: amount,
+        remainingAmount: amount,
+        status: 'Open',
+        note: balance.byGroup.map((group) => group.groupName).join(', '),
+      }))
+
+    const personalRows: BalanceListRecord[] = personalBalanceRecords
+      .filter(({ obligation }) => obligation.direction === 'user_owes' && obligation.source_expense_id)
+      .map(({ obligation }) => ({
+        id: `personal-${obligation.id}`,
+        source: 'expense',
+        direction: 'payable',
+        person: obligation.contact_name,
+        balanceType: obligation.category || 'Personal Expense',
+        originalAmount: obligation.amount,
+        remainingAmount: obligation.display_remaining_amount,
+        status: balanceStatusLabel(obligation.lifecycle_status),
+        note: obligation.note,
+        action: (
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 rounded-lg text-xs"
+            onClick={() => {
+              setPersonalTarget({ obligation })
+              setPersonalAccountId('')
+              setPersonalNote('')
+            }}
+          >
+            Pay Now
+          </Button>
+        ),
+      }))
+
+    return [...sharedRows, ...personalRows]
+  }, [personalBalanceRecords, sharedBalanceRecords])
+
+  const manualPayableRows = useMemo((): BalanceListRecord[] =>
+    personalBalanceRecords
+      .filter(({ obligation }) => obligation.direction === 'user_owes' && !obligation.source_expense_id)
+      .map(({ obligation }) => ({
+        id: `manual-${obligation.id}`,
+        source: 'manual',
+        direction: 'payable',
+        person: obligation.contact_name,
+        balanceType: obligation.category || 'Manual Payable',
+        originalAmount: obligation.amount,
+        remainingAmount: obligation.display_remaining_amount,
+        status: balanceStatusLabel(obligation.lifecycle_status),
+        dueDate: null,
+        note: obligation.note,
+        action: (
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 rounded-lg text-xs"
+            onClick={() => {
+              setPersonalTarget({ obligation })
+              setPersonalAccountId('')
+              setPersonalNote('')
+            }}
+          >
+            Pay Now
+          </Button>
+        ),
+      })),
+    [personalBalanceRecords]
+  )
+
+  const loanPayableRows = useMemo((): BalanceListRecord[] =>
+    loanPayables.map((loan) => ({
+      id: `loan-${loan.id}`,
+      source: 'loan',
+      direction: 'payable',
+      person: loan.person_name,
+      balanceType: 'Personal Loan',
+      originalAmount: loan.amount,
+      remainingAmount: loan.remaining_amount,
+      status: balanceStatusLabel(loan.status),
+      dueDate: loan.due_date,
+      note: loan.notes,
+      principalAmount: getLoanPrincipal(loan),
+      transferFee: getLoanTransferFee(loan),
+      feeResponsibility: loan.fee_responsibility ?? 'lender',
+      totalLoanBalance: loan.amount,
+      action: (
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 rounded-lg text-xs"
+          onClick={() => {
+            setPayingLoan(loan)
+            setLoanPaymentAmount(String(loan.remaining_amount))
+            setLoanPaymentAccountId('')
+            setLoanPaymentNote('')
+          }}
+        >
+          Pay Loan
+        </Button>
+      ),
+    })),
+    [loanPayables]
+  )
+
+  const creditCardRows = useMemo((): BalanceListRecord[] =>
+    creditCardPayableRecords.map(({ card, amount, status, dueDate }) => ({
+      id: `credit-${card.id}`,
+      source: 'credit_card',
+      direction: 'payable',
+      person: card.name,
+      balanceType: 'Credit Card',
+      originalAmount: amount,
+      remainingAmount: amount,
+      status,
+      dueDate: dueDate?.toISOString() ?? null,
+      action: (
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 rounded-lg text-xs"
+          onClick={() => {
+            setActiveTab('credit_cards')
+            setSelectedCardId(card.id)
+          }}
+        >
+          View Card
+        </Button>
+      ),
+    })),
+    [creditCardPayableRecords]
+  )
+
   // ── Settle handler ────────────────────────────────────────────
   const handleSettle = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -838,6 +1320,147 @@ export function BalancesClient({ userId }: Props) {
     }
   }
 
+  const resetLoanForm = () => {
+    setLoanType('money_lent')
+    setLoanPersonType('external')
+    setLoanPersonName('')
+    setLoanPersonEmail('')
+    setLoanPersonPhone('')
+    setLoanContactId('')
+    setLoanRegisteredQuery('')
+    setLoanRegisteredResults([])
+    setLoanRegisteredUser(null)
+    setLoanAmount('')
+    setLoanTransferFee('0')
+    setLoanFeeResponsibility('lender')
+    setLoanAccountId('')
+    setLoanDate(new Date().toISOString().slice(0, 10))
+    setLoanDueDate('')
+    setLoanNotes('')
+  }
+
+  const handleCreateLoan = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const amount = Number(loanAmount)
+    const transferFee = loanTransferFee.trim() === '' ? 0 : Number(loanTransferFee)
+    const selectedContact = contacts.find((contact) => contact.id === loanContactId) ?? null
+    const counterpartyName = loanPersonType === 'registered_user'
+      ? loanRegisteredUser?.name ?? ''
+      : loanPersonType === 'contact'
+        ? selectedContact?.name ?? ''
+        : loanPersonName.trim()
+    const counterpartyEmail = loanPersonType === 'registered_user'
+      ? loanRegisteredUser?.email ?? null
+      : loanPersonType === 'contact'
+        ? selectedContact?.email ?? null
+        : loanPersonEmail.trim() || null
+    const counterpartyPhone = loanPersonType === 'contact'
+      ? selectedContact?.phone ?? null
+      : loanPersonPhone.trim() || null
+    const counterpartyContactId = loanPersonType === 'contact' ? selectedContact?.id ?? null : null
+    const counterpartyUserId = loanPersonType === 'registered_user'
+      ? loanRegisteredUser?.id ?? null
+      : loanPersonType === 'contact'
+        ? selectedContact?.linked_user_id ?? null
+        : null
+
+    if (loanPersonType === 'registered_user' && !loanRegisteredUser) {
+      toast.error('Please select a registered user.')
+      return
+    }
+    if (loanPersonType === 'contact' && !selectedContact) {
+      toast.error('Please select an existing contact.')
+      return
+    }
+    if (!counterpartyName) {
+      toast.error('Person is required.')
+      return
+    }
+    if (!loanAccountId) {
+      toast.error('Please select an account.')
+      return
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error('Loan amount must be greater than zero.')
+      return
+    }
+    if (!Number.isFinite(transferFee)) {
+      toast.error('Transfer fee must be a valid amount.')
+      return
+    }
+    if (transferFee < 0) {
+      toast.error('Transfer fee cannot be negative.')
+      return
+    }
+
+    setIsSavingLoan(true)
+    try {
+      await createLoan({
+        loan_type: loanType,
+        counterparty_kind: loanPersonType,
+        person_name: counterpartyName,
+        person_email: counterpartyEmail,
+        person_phone: counterpartyPhone,
+        contact_id: counterpartyContactId,
+        contact_user_id: counterpartyUserId,
+        amount,
+        transfer_fee: transferFee,
+        fee_responsibility: loanFeeResponsibility,
+        account_id: loanAccountId,
+        loan_date: new Date(`${loanDate}T12:00:00`).toISOString(),
+        due_date: loanDueDate || null,
+        notes: loanNotes.trim(),
+      })
+      await Promise.all([load(), reloadAccounts()])
+      setShowLoanDialog(false)
+      resetLoanForm()
+      toast.success('Loan recorded')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to record loan')
+    } finally {
+      setIsSavingLoan(false)
+    }
+  }
+
+  const handleLoanPayment = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!payingLoan) return
+    const amount = Number(loanPaymentAmount)
+
+    if (!loanPaymentAccountId) {
+      toast.error('Please select an account.')
+      return
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error('Payment amount must be greater than zero.')
+      return
+    }
+    if (amount > payingLoan.remaining_amount + 0.005) {
+      toast.error('Payment amount cannot exceed the remaining balance.')
+      return
+    }
+
+    setIsSavingLoanPayment(true)
+    try {
+      await recordLoanPayment({
+        loan_id: payingLoan.id,
+        amount,
+        account_id: loanPaymentAccountId,
+        note: loanPaymentNote.trim(),
+      })
+      await Promise.all([load(), reloadAccounts()])
+      setPayingLoan(null)
+      setLoanPaymentAccountId('')
+      setLoanPaymentAmount('')
+      setLoanPaymentNote('')
+      toast.success(payingLoan.loan_type === 'money_lent' ? 'Loan payment received' : 'Loan payment recorded')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to record payment')
+    } finally {
+      setIsSavingLoanPayment(false)
+    }
+  }
+
   const handleRecallPersonal = async (id: string) => {
     try {
       await recallPersonalObligationPayment(id)
@@ -868,7 +1491,6 @@ export function BalancesClient({ userId }: Props) {
     }
   }
 
-  const shortName = (email: string) => email.split('@')[0]
   const accountLabel = (id?: string | null) => {
     if (!id) return 'No account selected'
     const account = accounts.find((a) => a.id === id)
@@ -908,20 +1530,24 @@ export function BalancesClient({ userId }: Props) {
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold">Balances</h1>
-        <p className="text-sm text-muted-foreground">Personal and shared interpersonal balances</p>
+        <p className="text-sm text-muted-foreground">Receivables, payables, loans, cards, and settlements</p>
       </div>
 
-      <div className="flex gap-1.5 rounded-2xl bg-muted/60 p-1">
+      <div className="grid grid-cols-3 lg:grid-cols-6 gap-1.5 rounded-2xl bg-muted/60 p-1">
         {([
-          ['balances', 'Balances'],
+          ['overview', 'Overview'],
+          ['receivables', 'Receivables'],
+          ['payables', 'Payables'],
+          ['loans', 'Loans'],
           ['credit_cards', 'Credit Cards'],
+          ['settlements', 'Settlements'],
         ] as const).map(([value, label]) => (
           <button
             key={value}
             type="button"
             onClick={() => setActiveTab(value)}
             className={cn(
-              'flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors',
+              'rounded-xl px-2 py-2 text-xs font-semibold transition-colors lg:text-sm',
               activeTab === value
                 ? 'bg-background text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
@@ -932,7 +1558,138 @@ export function BalancesClient({ userId }: Props) {
         ))}
       </div>
 
-      {activeTab === 'credit_cards' ? (
+      {activeTab === 'overview' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+              <div className="flex items-center gap-1.5 mb-1">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <p className="text-xs text-muted-foreground">Receivables</p>
+              </div>
+              <p className="text-xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{formatCurrency(overviewReceivables)}</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Shared, manual, and loan receivables
+              </p>
+            </div>
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+              <div className="flex items-center gap-1.5 mb-1">
+                <TrendingDown className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                <p className="text-xs text-muted-foreground">Payables</p>
+              </div>
+              <p className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-400">{formatCurrency(overviewPayables)}</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Shared, manual, loans, and credit cards
+              </p>
+            </div>
+            <div className={cn(
+              'rounded-2xl border p-4',
+              netPosition >= 0
+                ? 'border-emerald-500/20 bg-emerald-500/5'
+                : 'border-rose-500/20 bg-rose-500/5'
+            )}>
+              <div className="flex items-center gap-1.5 mb-1">
+                <Scale className={cn('w-3.5 h-3.5', netPosition >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')} />
+                <p className="text-xs text-muted-foreground">Net Position</p>
+              </div>
+              <p className={cn('text-xl font-bold tabular-nums', netPosition >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400')}>
+                {netPosition < 0 ? '-' : ''}{formatCurrency(Math.abs(netPosition))}
+              </p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Receivables minus payables</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <BalanceRecordSection
+              title="Receivables"
+              total={overviewReceivables}
+              records={[...expenseReceivableRows, ...loanReceivableRows, ...manualReceivableRows]}
+              emptyLabel="No active receivables."
+            />
+            <BalanceRecordSection
+              title="Payables"
+              total={overviewPayables}
+              records={[...expensePayableRows, ...loanPayableRows, ...creditCardRows, ...manualPayableRows]}
+              emptyLabel="No active payables."
+            />
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'receivables' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+            <p className="text-xs text-muted-foreground">Total Receivables</p>
+            <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{formatCurrency(overviewReceivables)}</p>
+          </div>
+          <BalanceRecordSection title="Expense-Based" total={expenseReceivableRows.reduce((sum, row) => sum + row.remainingAmount, 0)} records={expenseReceivableRows} emptyLabel="No expense-based receivables." />
+          <BalanceRecordSection title="Loan-Based" total={loanReceivableTotal} records={loanReceivableRows} emptyLabel="No loan receivables." />
+          <BalanceRecordSection title="Manual Receivables" total={manualReceivableRows.reduce((sum, row) => sum + row.remainingAmount, 0)} records={manualReceivableRows} emptyLabel="No manual receivables." />
+        </div>
+      )}
+
+      {activeTab === 'payables' && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+            <p className="text-xs text-muted-foreground">Total Payables</p>
+            <p className="text-2xl font-bold tabular-nums text-amber-700 dark:text-amber-400">{formatCurrency(overviewPayables)}</p>
+          </div>
+          <BalanceRecordSection title="Expense-Based" total={expensePayableRows.reduce((sum, row) => sum + row.remainingAmount, 0)} records={expensePayableRows} emptyLabel="No expense-based payables." />
+          <BalanceRecordSection title="Loan-Based" total={loanPayableTotal} records={loanPayableRows} emptyLabel="No loan payables." />
+          <BalanceRecordSection title="Credit Cards" total={creditCardPayableTotal} records={creditCardRows} emptyLabel="No outstanding credit card balances." />
+          <BalanceRecordSection title="Manual Payables" total={manualPayableRows.reduce((sum, row) => sum + row.remainingAmount, 0)} records={manualPayableRows} emptyLabel="No manual payables." />
+        </div>
+      )}
+
+      {activeTab === 'loans' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Loans</h2>
+              <p className="text-xs text-muted-foreground">Formal money lent and borrowed, tracked outside expenses and income.</p>
+            </div>
+            <Button type="button" size="sm" className="h-9 rounded-xl text-xs gap-1.5" onClick={() => setShowLoanDialog(true)}>
+              <Plus className="w-3.5 h-3.5" />
+              Add Loan
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+              <p className="text-xs text-muted-foreground">Loan Receivables</p>
+              <p className="text-lg font-bold tabular-nums text-emerald-700 dark:text-emerald-400">{formatCurrency(loanReceivableTotal)}</p>
+            </div>
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
+              <p className="text-xs text-muted-foreground">Loan Payables</p>
+              <p className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-400">{formatCurrency(loanPayableTotal)}</p>
+            </div>
+          </div>
+          <BalanceRecordSection title="Money Lent" total={loanReceivableTotal} records={loanReceivableRows} emptyLabel="No money lent loans." />
+          <BalanceRecordSection title="Money Borrowed" total={loanPayableTotal} records={loanPayableRows} emptyLabel="No money borrowed loans." />
+
+          {loanPayments.length > 0 && (
+            <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+              <h2 className="text-sm font-semibold">Loan Payment History</h2>
+              <div className="space-y-2">
+                {loanPayments.slice(0, 8).map((payment) => {
+                  const loan = loans.find((item) => item.id === payment.loan_id)
+                  return (
+                    <div key={payment.id} className="flex items-center justify-between gap-3 rounded-xl bg-muted/40 p-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{loan?.person_name ?? 'Loan payment'}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {formatDateLabel(payment.paid_at)} · {accountLabel(payment.account_id)}{payment.note ? ` · ${payment.note}` : ''}
+                        </p>
+                      </div>
+                      <p className="text-sm font-bold tabular-nums">{formatCurrency(payment.amount)}</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'credit_cards' && (
         <div className="space-y-4">
           {creditCards.length === 0 ? (
             <div className="text-center py-20 space-y-3">
@@ -1208,7 +1965,9 @@ export function BalancesClient({ userId }: Props) {
             </>
           )}
         </div>
-      ) : (
+      )}
+
+      {activeTab === 'settlements' && (
         <>
 
       {/* Summary cards */}
@@ -1696,6 +2455,321 @@ export function BalancesClient({ userId }: Props) {
                   disabled={isSavingCardPayment || !cardPaymentSourceId || !cardPaymentAmount || Number(cardPaymentAmount) <= 0 || Number(cardPaymentAmount) > Math.abs(payingCard.balance)}
                 >
                   {isSavingCardPayment ? 'Saving…' : 'Record Payment'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Loan create dialog ── */}
+      <Dialog
+        open={showLoanDialog}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowLoanDialog(false)
+            resetLoanForm()
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Add Loan</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateLoan} className="space-y-4">
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ['money_lent', 'Money Lent'],
+                ['money_borrowed', 'Money Borrowed'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setLoanType(value)}
+                  className={cn(
+                    'rounded-xl border px-3 py-2 text-sm font-semibold transition-colors',
+                    loanType === value
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-muted/40 text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Person Type</Label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {([
+                  ['registered_user', 'Registered'],
+                  ['contact', 'Contact'],
+                  ['external', 'External'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => {
+                      setLoanPersonType(value)
+                      setLoanPersonName('')
+                      setLoanPersonEmail('')
+                      setLoanPersonPhone('')
+                      setLoanContactId('')
+                      setLoanRegisteredQuery('')
+                      setLoanRegisteredResults([])
+                      setLoanRegisteredUser(null)
+                    }}
+                    className={cn(
+                      'rounded-xl border px-2 py-2 text-xs font-semibold transition-colors',
+                      loanPersonType === value
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted/40 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {loanPersonType === 'registered_user' && (
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Registered User</Label>
+                <Input
+                  value={loanRegisteredQuery}
+                  onChange={(e) => {
+                    setLoanRegisteredQuery(e.target.value)
+                    setLoanRegisteredUser(null)
+                  }}
+                  placeholder="Search by email"
+                  className="h-11 rounded-xl"
+                />
+                {loanRegisteredUser ? (
+                  <p className="text-xs font-medium text-primary">{loanRegisteredUser.email}</p>
+                ) : loanRegisteredResults.length > 0 ? (
+                  <div className="space-y-1 rounded-xl border border-border bg-muted/30 p-1">
+                    {loanRegisteredResults.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => {
+                          setLoanRegisteredUser(option)
+                          setLoanRegisteredQuery(option.email)
+                        }}
+                        className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-background"
+                      >
+                        <span className="font-medium">{option.name}</span>
+                        <span className="block text-xs text-muted-foreground">{option.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Search for an existing Budget Journal user.</p>
+                )}
+              </div>
+            )}
+
+            {loanPersonType === 'contact' && (
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Existing Contact</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {contacts.map((contact) => (
+                    <button
+                      key={contact.id}
+                      type="button"
+                      onClick={() => setLoanContactId(contact.id)}
+                      className={cn(
+                        'rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
+                        loanContactId === contact.id
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-muted/40 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {contact.name}
+                    </button>
+                  ))}
+                </div>
+                {contacts.length === 0 && (
+                  <p className="text-xs text-muted-foreground">Add contacts under Shared → Contacts.</p>
+                )}
+              </div>
+            )}
+
+            {loanPersonType === 'external' && (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Name</Label>
+                  <Input value={loanPersonName} onChange={(e) => setLoanPersonName(e.target.value)} placeholder="e.g. Sean" className="h-11 rounded-xl" required />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">Email</Label>
+                    <Input type="email" value={loanPersonEmail} onChange={(e) => setLoanPersonEmail(e.target.value)} placeholder="Optional" className="h-11 rounded-xl" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">Phone</Label>
+                    <Input value={loanPersonPhone} onChange={(e) => setLoanPersonPhone(e.target.value)} placeholder="Optional" className="h-11 rounded-xl" />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Amount</Label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                <Input type="number" inputMode="decimal" min="0.01" step="0.01" value={loanAmount} onChange={(e) => setLoanAmount(e.target.value)} className="pl-8 h-11 rounded-xl font-semibold" required />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Transfer Fee</Label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={loanTransferFee}
+                  onChange={(e) => setLoanTransferFee(e.target.value)}
+                  className="pl-8 h-11 rounded-xl font-semibold"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Fee Responsibility</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  ['lender', 'Lender'],
+                  ['borrower', 'Borrower'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setLoanFeeResponsibility(value)}
+                    className={cn(
+                      'rounded-xl border px-3 py-2 text-sm font-semibold transition-colors',
+                      loanFeeResponsibility === value
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-muted/40 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Total loan balance: {formatCurrency((Number(loanAmount) || 0) + (loanFeeResponsibility === 'borrower' ? Number(loanTransferFee) || 0 : 0))}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">
+                {loanType === 'money_lent' ? 'Source Account' : 'Destination Account'}
+              </Label>
+              <AccountChips accounts={sourceAccounts} value={loanAccountId} onChange={setLoanAccountId} allowNone={false} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Loan Date</Label>
+                <Input type="date" value={loanDate} onChange={(e) => setLoanDate(e.target.value)} className="h-11 rounded-xl" required />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Due Date</Label>
+                <Input type="date" value={loanDueDate} onChange={(e) => setLoanDueDate(e.target.value)} className="h-11 rounded-xl" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Notes</Label>
+              <Input value={loanNotes} onChange={(e) => setLoanNotes(e.target.value)} placeholder="Optional" className="h-11 rounded-xl" />
+            </div>
+
+            <div className="flex gap-3 pt-1">
+              <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => { setShowLoanDialog(false); resetLoanForm() }}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="flex-1 h-11 rounded-xl font-semibold"
+                disabled={
+                  isSavingLoan
+                  || !loanAccountId
+                  || !loanAmount
+                  || (loanPersonType === 'external' && !loanPersonName.trim())
+                  || (loanPersonType === 'contact' && !loanContactId)
+                  || (loanPersonType === 'registered_user' && !loanRegisteredUser)
+                }
+              >
+                {isSavingLoan ? 'Saving…' : 'Save Loan'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Loan payment dialog ── */}
+      <Dialog
+        open={!!payingLoan}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPayingLoan(null)
+            setLoanPaymentAccountId('')
+            setLoanPaymentAmount('')
+            setLoanPaymentNote('')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">
+              {payingLoan?.loan_type === 'money_lent' ? 'Record Loan Payment' : 'Pay Loan'}
+            </DialogTitle>
+          </DialogHeader>
+          {payingLoan && (
+            <form onSubmit={handleLoanPayment} className="space-y-4">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-muted/60 border border-border">
+                <div>
+                  <p className="text-xs text-muted-foreground">
+                    {payingLoan.loan_type === 'money_lent' ? 'Receiving from' : 'Paying'}
+                  </p>
+                  <p className="text-sm font-semibold">{payingLoan.person_name}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Remaining {formatCurrency(payingLoan.remaining_amount)}
+                  </p>
+                </div>
+                <span className="text-xl font-bold tabular-nums">{formatCurrency(Number(loanPaymentAmount) || payingLoan.remaining_amount)}</span>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Amount</Label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                  <Input type="number" inputMode="decimal" min="0.01" max={payingLoan.remaining_amount} step="0.01" value={loanPaymentAmount} onChange={(e) => setLoanPaymentAmount(e.target.value)} className="pl-8 h-11 rounded-xl font-semibold" required />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">
+                  {payingLoan.loan_type === 'money_lent' ? 'Receive Into Account' : 'Pay From Account'}
+                </Label>
+                <AccountChips accounts={sourceAccounts} value={loanPaymentAccountId} onChange={setLoanPaymentAccountId} allowNone={false} />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Note</Label>
+                <Input value={loanPaymentNote} onChange={(e) => setLoanPaymentNote(e.target.value)} placeholder="Optional" className="h-11 rounded-xl" />
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => { setPayingLoan(null); setLoanPaymentAccountId(''); setLoanPaymentAmount(''); setLoanPaymentNote('') }}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="flex-1 h-11 rounded-xl font-semibold" disabled={isSavingLoanPayment || !loanPaymentAccountId || !loanPaymentAmount}>
+                  {isSavingLoanPayment ? 'Saving…' : 'Record Payment'}
                 </Button>
               </div>
             </form>

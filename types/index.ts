@@ -315,6 +315,38 @@ export interface Expense {
   created_at: string
   updated_at?: string | null
   personal_obligations?: PersonalObligation[]
+  expense_participants?: ExpenseParticipant[]
+}
+
+export type ExpenseParticipantKind = 'self' | 'contact' | 'external'
+export type ExpenseSplitMode = 'equal' | 'custom'
+
+export interface ExpenseParticipant {
+  id: string
+  expense_id: string
+  user_id: string
+  participant_kind: ExpenseParticipantKind
+  contact_id: string | null
+  contact_user_id: string | null
+  participant_name: string
+  participant_email: string | null
+  participant_phone?: string | null
+  share_amount: number
+  is_payer: boolean
+  obligation_id: string | null
+  created_at: string
+  personal_obligations?: PersonalObligation | null
+}
+
+export interface ExpenseParticipantFormData {
+  participant_kind: ExpenseParticipantKind
+  contact_id?: string | null
+  contact_user_id?: string | null
+  participant_name: string
+  participant_email?: string | null
+  participant_phone?: string | null
+  share_amount: number
+  is_payer?: boolean
 }
 
 export interface ExpenseSharedBudgetDetails {
@@ -331,6 +363,9 @@ export interface ExpenseDetailsData {
   account: FinancialAccount | null
   sharedBudget: ExpenseSharedBudgetDetails | null
   obligation: PersonalObligation | null
+  obligations: PersonalObligation[]
+  settlements: PersonalObligationSettlement[]
+  participants: ExpenseParticipant[]
 }
 
 export interface Budget {
@@ -369,6 +404,8 @@ export interface ExpenseFormData {
   remove_receipt?: boolean
   receipt_path?: string | null
   has_receipt?: boolean
+  split_mode?: ExpenseSplitMode
+  participants?: ExpenseParticipantFormData[]
 }
 
 export interface BudgetFormData {
@@ -458,6 +495,8 @@ export interface AccountTransfer {
   from_account_id: string
   to_account_id: string
   amount: number
+  transfer_fee: number
+  fee_expense_id: string | null
   note: string
   transferred_at: string
   created_at: string
@@ -467,6 +506,7 @@ export interface AccountTransferFormData {
   from_account_id: string
   to_account_id: string
   amount: number
+  transfer_fee?: number
   note: string
   transferred_at: string
 }
@@ -481,6 +521,75 @@ export interface CreditCardPayment {
   remaining_outstanding_after_payment: number
   paid_at: string
   created_at: string
+}
+
+export type LoanType = 'money_lent' | 'money_borrowed'
+export type LoanStatus = 'active' | 'partially_paid' | 'paid'
+export type LoanCounterpartyKind = 'registered_user' | 'contact' | 'external'
+export type LoanFeeResponsibility = 'lender' | 'borrower'
+
+export interface Loan {
+  id: string
+  user_id: string
+  loan_type: LoanType
+  counterparty_kind: LoanCounterpartyKind
+  person_name: string
+  person_email: string | null
+  person_phone: string | null
+  contact_id: string | null
+  contact_user_id: string | null
+  account_id: string | null
+  principal_amount: number
+  transfer_fee: number
+  fee_responsibility: LoanFeeResponsibility
+  fee_expense_id: string | null
+  amount: number
+  paid_amount: number
+  remaining_amount: number
+  status: LoanStatus
+  loan_date: string
+  due_date: string | null
+  notes: string
+  interest_rate: number | null
+  payment_schedule: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LoanPayment {
+  id: string
+  loan_id: string
+  user_id: string
+  account_id: string | null
+  amount: number
+  paid_at: string
+  note: string
+  created_at: string
+}
+
+export interface LoanFormData {
+  loan_type: LoanType
+  counterparty_kind: LoanCounterpartyKind
+  person_name: string
+  person_email?: string | null
+  person_phone?: string | null
+  contact_id?: string | null
+  contact_user_id?: string | null
+  amount: number
+  transfer_fee?: number
+  fee_responsibility?: LoanFeeResponsibility
+  account_id: string
+  loan_date: string
+  due_date?: string | null
+  notes?: string
+}
+
+export interface LoanPaymentFormData {
+  loan_id: string
+  amount: number
+  account_id: string
+  paid_at?: string
+  note?: string
 }
 
 export interface DashboardStats {

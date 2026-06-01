@@ -17,6 +17,8 @@ export function TransferItem({ transfer, accounts, onDelete }: TransferItemProps
 
   const date = new Date(transfer.transferred_at)
   const dateStr = date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+  const transferFee = Number(transfer.transfer_fee ?? 0)
+  const totalDeducted = transfer.amount + transferFee
 
   return (
     <div className="flex items-center gap-3 p-4 rounded-2xl border border-border bg-card">
@@ -29,6 +31,10 @@ export function TransferItem({ transfer, accounts, onDelete }: TransferItemProps
         {transfer.note && (
           <p className="text-xs text-muted-foreground truncate">{transfer.note}</p>
         )}
+        <p className="text-[10px] text-muted-foreground">
+          Transferred: {formatCurrency(transfer.amount)}
+          {transferFee > 0 ? ` · Fee: ${formatCurrency(transferFee)} · Total deducted: ${formatCurrency(totalDeducted)}` : ` · Fee: ${formatCurrency(0)}`}
+        </p>
         <p className="text-[10px] text-muted-foreground">{dateStr}</p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">

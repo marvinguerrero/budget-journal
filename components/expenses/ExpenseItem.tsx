@@ -36,7 +36,10 @@ export function ExpenseItem({ expense, onUpdate, onDelete, onOpenDetails, accoun
   const icon = CATEGORY_ICONS[expense.category] || '📦'
   const color = CATEGORY_COLORS[expense.category] || '#6B7280'
   const account = expense.account_id ? accounts.find((a) => a.id === expense.account_id) : null
-  const obligation = expense.personal_obligations?.find((o) => o.direction === 'owed_to_user')
+  const hasParticipants = (expense.expense_participants?.length ?? 0) > 0
+  const obligation = hasParticipants
+    ? undefined
+    : expense.personal_obligations?.find((o) => o.direction === 'owed_to_user')
   const isSharedBudgetExpense = expense.is_shared_budget_expense === true
   const categoryLabel = expense.shared_budget_item
     ? `${expense.category} → ${expense.shared_budget_item}`
@@ -145,6 +148,17 @@ export function ExpenseItem({ expense, onUpdate, onDelete, onOpenDetails, accoun
                 contact_email: obligation?.contact_email,
                 receipt_path: expense.receipt_path,
                 has_receipt: expense.has_receipt,
+                split_mode: inferSplitMode(expense.expense_participants),
+                participants: expense.expense_participants?.map((participant) => ({
+                  participant_kind: participant.participant_kind,
+                  contact_id: participant.contact_id,
+                  contact_user_id: participant.contact_user_id,
+                  participant_name: participant.participant_name,
+                  participant_email: participant.participant_email,
+                  participant_phone: participant.participant_phone,
+                  share_amount: participant.share_amount,
+                  is_payer: participant.is_payer,
+                })),
               }}
               isEditing
             />
@@ -173,6 +187,17 @@ export function ExpenseItem({ expense, onUpdate, onDelete, onOpenDetails, accoun
                   contact_email: obligation?.contact_email,
                   receipt_path: expense.receipt_path,
                   has_receipt: expense.has_receipt,
+                  split_mode: inferSplitMode(expense.expense_participants),
+                  participants: expense.expense_participants?.map((participant) => ({
+                    participant_kind: participant.participant_kind,
+                    contact_id: participant.contact_id,
+                    contact_user_id: participant.contact_user_id,
+                    participant_name: participant.participant_name,
+                    participant_email: participant.participant_email,
+                    participant_phone: participant.participant_phone,
+                    share_amount: participant.share_amount,
+                    is_payer: participant.is_payer,
+                  })),
                 }}
                 isEditing
               />
@@ -182,4 +207,12 @@ export function ExpenseItem({ expense, onUpdate, onDelete, onOpenDetails, accoun
       )}
     </>
   )
+}
+
+function inferSplitMode(participants?: Expense['expense_participants']) {
+  if (!participants || participants.length < 2) return 'equal'
+  const first = Number(participants[0].share_amount ?? 0)
+  return participants.every((participant) => Math.abs(Number(participant.share_amount ?? 0) - first) < 0.01)
+    ? 'equal'
+    : 'custom'
 }

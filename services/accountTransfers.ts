@@ -25,14 +25,22 @@ export async function getAccountTransfers(month?: number, year?: number): Promis
 
 export async function createAccountTransfer(form: AccountTransferFormData): Promise<AccountTransfer> {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
-  const { data, error } = await supabase
-    .from('account_transfers')
-    .insert({ user_id: user.id, ...form })
-    .select()
-    .single()
-  if (error) throw error
+  const transferFee = Number(form.transfer_fee ?? 0)
+
+  if (transferFee < 0) {
+    throw new Error('Transfer fee cannot be negative.')
+  }
+
+  const { data, error } = await supabase.rpc('create_account_transfer_with_fee', {
+    p_from_account_id: form.from_account_id,
+    p_to_account_id: form.to_account_id,
+    p_amount: form.amount,
+    p_note: form.note,
+    p_transferred_at: form.transferred_at,
+    p_transfer_fee: transferFee,
+  })
+
+  if (error) throw new Error(error.message)
   return data
 }
 

@@ -122,8 +122,9 @@ function SplitSection({
 }: SplitSectionProps) {
   const active      = participants.filter((p) => included[p.user_id] !== false)
   const equalShare  = active.length > 0 ? totalAmt / active.length : 0
-  const customTotal = participants.reduce((s, p) => s + (parseFloat(customAmts[p.user_id] || '0') || 0), 0)
-  const customValid = totalAmt > 0 && Math.abs(customTotal - totalAmt) <= 0.01
+  const customSummary = getCustomSplitSummary(participants, customAmts, totalAmt)
+  const customTotal = customSummary.total
+  const customValid = customSummary.isValid
 
   return (
     <div className="space-y-3">
@@ -212,7 +213,12 @@ function SplitSection({
               </div>
             ))}
           </div>
-          {!customValid && totalAmt > 0 && (
+          {customSummary.hasNegative && (
+            <p className="text-xs text-destructive">
+              Shares cannot be negative.
+            </p>
+          )}
+          {!customSummary.hasNegative && !customValid && totalAmt > 0 && (
             <p className="text-xs text-amber-600 dark:text-amber-400">
               Remaining: {formatCurrency(totalAmt - customTotal)}
             </p>
@@ -276,7 +282,23 @@ function computeSplits(
   }
   return participants
     .map((p) => ({ user_id: p.user_id, email: p.email, amount: parseFloat(customAmounts[p.user_id] || '0') || 0 }))
-    .filter((s) => s.amount > 0)
+    .filter((s) => s.amount >= 0)
+}
+
+function getCustomSplitSummary(
+  participants: Participant[],
+  customAmounts: Record<string, string>,
+  totalAmount: number,
+) {
+  const amounts = participants.map((p) => parseFloat(customAmounts[p.user_id] || '0') || 0)
+  const total = amounts.reduce((sum, amount) => sum + amount, 0)
+  const hasNegative = amounts.some((amount) => amount < 0)
+
+  return {
+    total,
+    hasNegative,
+    isValid: totalAmount > 0 && !hasNegative && Math.abs(total - totalAmount) <= 0.01,
+  }
 }
 
 // ── main component ────────────────────────────────────────────────────────────
@@ -489,9 +511,13 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
 
     if (expenseSplitMode === 'custom') {
-      const total = allParticipants.reduce((s, p) => s + (parseFloat(expenseCustomAmts[p.user_id] || '0') || 0), 0)
-      if (Math.abs(total - amt) > 0.01) {
-        toast.error(`Custom split total (${formatCurrency(total)}) must equal expense amount (${formatCurrency(amt)})`)
+      const summary = getCustomSplitSummary(allParticipants, expenseCustomAmts, amt)
+      if (summary.hasNegative) {
+        toast.error('Custom split shares cannot be negative')
+        return
+      }
+      if (!summary.isValid) {
+        toast.error(`Custom split total (${formatCurrency(summary.total)}) must equal expense amount (${formatCurrency(amt)})`)
         return
       }
     }
@@ -587,9 +613,13 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
     }
 
     if (editExpenseSplitMode === 'custom') {
-      const total = allParticipants.reduce((s, p) => s + (parseFloat(editExpenseCustomAmts[p.user_id] || '0') || 0), 0)
-      if (Math.abs(total - amt) > 0.01) {
-        toast.error(`Custom split total (${formatCurrency(total)}) must equal expense amount (${formatCurrency(amt)})`)
+      const summary = getCustomSplitSummary(allParticipants, editExpenseCustomAmts, amt)
+      if (summary.hasNegative) {
+        toast.error('Custom split shares cannot be negative')
+        return
+      }
+      if (!summary.isValid) {
+        toast.error(`Custom split total (${formatCurrency(summary.total)}) must equal expense amount (${formatCurrency(amt)})`)
         return
       }
     }
@@ -943,8 +973,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
   const addExpenseAmt = parseFloat(expenseAmount) || 0
 
   const isAddCustomValid = expenseSplitMode !== 'custom' || (() => {
-    const t = allParticipants.reduce((s, p) => s + (parseFloat(expenseCustomAmts[p.user_id] || '0') || 0), 0)
-    return Math.abs(t - addExpenseAmt) <= 0.01
+    return getCustomSplitSummary(allParticipants, expenseCustomAmts, addExpenseAmt).isValid
   })()
 
   const expenseForm = (
@@ -1067,8 +1096,7 @@ export function SharedGroupClient({ groupId, currentUserId, currentUserEmail }: 
 
   const editExpenseAmt    = parseFloat(editExpenseAmount) || 0
   const isEditCustomValid = editExpenseSplitMode !== 'custom' || (() => {
-    const t = allParticipants.reduce((s, p) => s + (parseFloat(editExpenseCustomAmts[p.user_id] || '0') || 0), 0)
-    return Math.abs(t - editExpenseAmt) <= 0.01
+    return getCustomSplitSummary(allParticipants, editExpenseCustomAmts, editExpenseAmt).isValid
   })()
 
   return (

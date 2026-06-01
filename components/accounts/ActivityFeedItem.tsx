@@ -160,6 +160,8 @@ export function ActivityFeedItem({ entry, onDelete }: ActivityFeedItemProps) {
 
   const isCreditCardPayment = entry.kind === 'transfer'
     && entry.note.toLowerCase().startsWith('credit card payment')
+  const transferFee = entry.kind === 'transfer' ? entry.transferFee : 0
+  const totalDeducted = entry.kind === 'transfer' ? entry.amount + transferFee : 0
 
   return (
     <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-card border border-border">
@@ -190,6 +192,10 @@ export function ActivityFeedItem({ entry, onDelete }: ActivityFeedItemProps) {
         {entry.note && (
           <p className="text-[10px] text-muted-foreground truncate">{entry.note}</p>
         )}
+        <p className="text-[10px] text-muted-foreground">
+          Transferred: {formatCurrency(entry.amount)}
+          {transferFee > 0 ? ` · Fee: ${formatCurrency(transferFee)} · Total deducted: ${formatCurrency(totalDeducted)}` : ` · Fee: ${formatCurrency(0)}`}
+        </p>
       </div>
       <p className="text-sm font-bold tabular-nums text-primary flex-shrink-0">
         {formatCurrency(entry.amount)}

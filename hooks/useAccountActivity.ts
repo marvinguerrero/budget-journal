@@ -30,6 +30,7 @@ export type ActivityEntry =
       id: string
       date: string
       amount: number
+      transferFee: number
       note: string
       fromAccount: FinancialAccount
       toAccount: FinancialAccount
@@ -159,7 +160,16 @@ export function useAccountActivity(month?: number, year?: number) {
         const fromAccount = accMap.get(t.from_account_id)
         const toAccount   = accMap.get(t.to_account_id)
         if (!fromAccount || !toAccount) continue
-        result.push({ kind: 'transfer', id: t.id, date: t.transferred_at, amount: t.amount, note: t.note, fromAccount, toAccount })
+        result.push({
+          kind: 'transfer',
+          id: t.id,
+          date: t.transferred_at,
+          amount: t.amount,
+          transferFee: Number(t.transfer_fee ?? 0),
+          note: t.note,
+          fromAccount,
+          toAccount,
+        })
       }
 
       for (const s of personalSettlements ?? []) {

@@ -1,9 +1,19 @@
 import { createClient } from '@/lib/supabase/client'
-import { Expense, ExpenseDetailsData, ExpenseFormData, ExpenseSharedBudgetDetails, FinancialAccount, PersonalObligation } from '@/types'
+import {
+  Expense,
+  ExpenseDetailsData,
+  ExpenseFormData,
+  ExpenseParticipant,
+  ExpenseParticipantFormData,
+  ExpenseSharedBudgetDetails,
+  FinancialAccount,
+  PersonalObligation,
+  PersonalObligationSettlement,
+} from '@/types'
 import { createPersonalObligation, createRegisteredPersonalObligation } from './personalObligations'
 import { deleteReceiptFile, uploadExpenseReceipt } from './receipts'
 
-const EXPENSE_SELECT = '*, personal_obligations(*)'
+const EXPENSE_SELECT = '*, personal_obligations(*), expense_participants(*)'
 const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
 
 type ExpensePipelineSource =
@@ -106,6 +116,151 @@ function toExpenseUpdate(formData: Partial<ExpenseFormData>) {
     ...(formData.account_id !== undefined ? { account_id: formData.account_id || null } : {}),
     ...(formData.created_at !== undefined ? { created_at: formData.created_at } : {}),
   }
+}
+
+function getLegacyOweMeObligation(expense: Expense) {
+  const hasParticipants = (expense.expense_participants?.length ?? 0) > 0
+  if (hasParticipants) return undefined
+  return expense.personal_obligations?.find((o) => o.direction === 'owed_to_user')
+}
+
+function normalizeParticipant(participant: ExpenseParticipantFormData): ExpenseParticipantFormData {
+  return {
+    participant_kind: participant.participant_kind,
+    contact_id: participant.contact_id ?? null,
+    contact_user_id: participant.contact_user_id ?? null,
+    participant_name: participant.participant_name.trim(),
+    participant_email: participant.participant_email?.trim() || null,
+    participant_phone: participant.participant_phone?.trim() || null,
+    share_amount: Number(participant.share_amount),
+    is_payer: participant.is_payer === true,
+  }
+}
+
+function getValidParticipants(formData: Partial<ExpenseFormData>) {
+  return (formData.participants ?? [])
+    .map(normalizeParticipant)
+    .filter((participant) =>
+      participant.participant_name
+      && Number.isFinite(participant.share_amount)
+      && participant.share_amount >= 0
+    )
+}
+
+async function replaceExpenseParticipants(params: {
+  expenseId: string
+  userId: string
+  participants: ExpenseParticipantFormData[]
+  totalAmount: number
+  category: string
+  note: string
+  createdAt: string
+}) {
+  const supabase = createClient()
+
+  const participantDelete = await supabase.from('expense_participants').delete().eq('expense_id', params.expenseId)
+  if (participantDelete.error) throw participantDelete.error
+
+  const obligationDelete = await supabase.from('personal_obligations').delete().eq('source_expense_id', params.expenseId)
+  if (obligationDelete.error) throw obligationDelete.error
+
+  if (params.participants.length === 0) return
+
+  const payer = params.participants.find((participant) => participant.is_payer)
+  if (!payer) throw new Error('Select one participant as payer.')
+  const participantTotal = params.participants.reduce((sum, participant) => sum + participant.share_amount, 0)
+  if (params.participants.some((participant) => participant.share_amount < 0)) {
+    throw new Error('Participant shares cannot be negative.')
+  }
+  if (Math.abs(participantTotal - params.totalAmount) > 0.01) {
+    throw new Error('Participant shares must equal the expense amount.')
+  }
+
+  const createdRows = []
+  const payerIsCurrentUser = payer.participant_kind === 'self'
+  for (const participant of params.participants) {
+    let obligationId: string | null = null
+    const participantIsCurrentUser = participant.participant_kind === 'self'
+
+    if (payerIsCurrentUser && !participant.is_payer && !participantIsCurrentUser && participant.share_amount > 0) {
+      const obligation = await createObligationForContact({
+        direction: 'owed_to_user',
+        contactId: participant.contact_id ?? null,
+        contactUserId: participant.contact_user_id ?? null,
+        contactName: participant.participant_name,
+        contactEmail: participant.participant_email ?? null,
+        amount: participant.share_amount,
+        category: params.category,
+        note: params.note,
+        sourceExpenseId: params.expenseId,
+        createdAt: params.createdAt,
+      })
+      obligationId = obligation.id
+    }
+
+    if (!payerIsCurrentUser && participantIsCurrentUser && !participant.is_payer && participant.share_amount > 0) {
+      const obligation = await createObligationForContact({
+        direction: 'user_owes',
+        contactId: payer.contact_id ?? null,
+        contactUserId: payer.contact_user_id ?? null,
+        contactName: payer.participant_name,
+        contactEmail: payer.participant_email ?? null,
+        amount: participant.share_amount,
+        category: params.category,
+        note: params.note,
+        sourceExpenseId: params.expenseId,
+        createdAt: params.createdAt,
+      })
+      obligationId = obligation.id
+    }
+
+    createdRows.push({
+      expense_id: params.expenseId,
+      user_id: params.userId,
+      participant_kind: participant.participant_kind,
+      contact_id: participant.contact_id ?? null,
+      contact_user_id: participant.contact_user_id ?? null,
+      participant_name: participant.participant_name,
+      participant_email: participant.participant_email ?? null,
+      ...(participant.participant_phone ? { participant_phone: participant.participant_phone } : {}),
+      share_amount: participant.share_amount,
+      is_payer: participant.is_payer === true,
+      obligation_id: obligationId,
+    })
+  }
+
+  const { error } = await supabase.from('expense_participants').insert(createdRows)
+  if (error) throw error
+}
+
+async function createIOweParticipantObligations(formData: ExpenseFormData) {
+  const participants = getValidParticipants(formData)
+  const payer = formData.contact_name?.trim()
+    ? {
+      contact_id: formData.contact_id ?? null,
+      contact_user_id: formData.contact_user_id ?? null,
+      participant_name: formData.contact_name.trim(),
+      participant_email: formData.contact_email ?? null,
+    }
+    : participants.find((participant) => participant.is_payer)
+
+  if (!payer?.participant_name) throw new Error('Paid by contact is required')
+
+  const selfParticipant = participants.find((participant) => participant.participant_kind === 'self')
+  const amount = selfParticipant?.share_amount ?? formData.amount
+  if (amount <= 0) return
+
+  await createObligationForContact({
+    direction: 'user_owes',
+    contactId: payer.contact_id ?? null,
+    contactUserId: payer.contact_user_id ?? null,
+    contactName: payer.participant_name,
+    contactEmail: payer.participant_email ?? null,
+    amount,
+    category: formData.category,
+    note: formData.note,
+    createdAt: formData.created_at,
+  })
 }
 
 async function setExpenseReceipt(params: {
@@ -292,7 +447,7 @@ export async function getExpenseDetails(id: string): Promise<ExpenseDetailsData>
   const supabase = createClient()
   const expense = await getExpenseById(id)
 
-  const [accountRes, obligationRes, sharedBudget] = await Promise.all([
+  const [accountRes, obligationsRes, participantsRes, sharedBudget] = await Promise.all([
     expense.account_id
       ? supabase.from('financial_accounts').select('*').eq('id', expense.account_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -300,18 +455,39 @@ export async function getExpenseDetails(id: string): Promise<ExpenseDetailsData>
       .from('personal_obligations')
       .select('*')
       .eq('source_expense_id', id)
-      .maybeSingle(),
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('expense_participants')
+      .select('*, personal_obligations(*)')
+      .eq('expense_id', id)
+      .order('created_at', { ascending: true }),
     getExpenseSharedBudgetDetails(expense),
   ])
 
   if (accountRes.error) throw accountRes.error
-  if (obligationRes.error) throw obligationRes.error
+  if (obligationsRes.error) throw obligationsRes.error
+  if (participantsRes.error) throw participantsRes.error
+
+  const obligations = (obligationsRes.data ?? []) as PersonalObligation[]
+  const obligationIds = obligations.map((item) => item.id)
+  const settlementsRes = obligationIds.length > 0
+    ? await supabase
+      .from('personal_obligation_settlements')
+      .select('*')
+      .in('obligation_id', obligationIds)
+      .order('created_at', { ascending: false })
+    : { data: [], error: null }
+
+  if (settlementsRes.error) throw settlementsRes.error
 
   return {
     expense,
     account: (accountRes.data ?? null) as FinancialAccount | null,
     sharedBudget,
-    obligation: (obligationRes.data ?? null) as PersonalObligation | null,
+    obligation: obligations[0] ?? null,
+    obligations,
+    settlements: (settlementsRes.data ?? []) as PersonalObligationSettlement[],
+    participants: (participantsRes.data ?? []) as ExpenseParticipant[],
   }
 }
 
@@ -321,18 +497,7 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
   if (!user) throw new Error('Not authenticated')
 
   if (formData.obligation_type === 'i_owe') {
-    if (!formData.contact_name?.trim()) throw new Error('Contact is required')
-    await createObligationForContact({
-      direction: 'user_owes',
-      contactId: formData.contact_id ?? null,
-      contactUserId: formData.contact_user_id ?? null,
-      contactName: formData.contact_name,
-      contactEmail: formData.contact_email ?? null,
-      amount: formData.amount,
-      category: formData.category,
-      note: formData.note,
-      createdAt: formData.created_at,
-    })
+    await createIOweParticipantObligations(formData)
     return null
   }
 
@@ -367,6 +532,21 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
     })
   }
 
+  if ((formData.obligation_type ?? 'normal') === 'normal') {
+    const participants = getValidParticipants(formData)
+    if (participants.length > 0) {
+      await replaceExpenseParticipants({
+        expenseId: data.id,
+        userId: user.id,
+        participants,
+        totalAmount: formData.amount,
+        category: formData.category,
+        note: formData.note,
+        createdAt: data.created_at,
+      })
+    }
+  }
+
   if (formData.receipt_file) {
     await setExpenseReceipt({
       expense: {
@@ -385,22 +565,22 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
 export async function updateExpense(id: string, formData: Partial<ExpenseFormData>): Promise<Expense | null> {
   const supabase = createClient()
   const existing = await getExpenseById(id)
-  const currentObligation = existing.personal_obligations?.find((o) => o.direction === 'owed_to_user')
+  const currentObligation = getLegacyOweMeObligation(existing)
   const nextType = formData.obligation_type
     ?? (currentObligation ? 'owe_me' : 'normal')
 
   if (nextType === 'i_owe') {
-    if (!formData.contact_name?.trim()) throw new Error('Contact is required')
-    await createObligationForContact({
-      direction: 'user_owes',
-      contactId: formData.contact_id ?? null,
-      contactUserId: formData.contact_user_id ?? null,
-      contactName: formData.contact_name,
-      contactEmail: formData.contact_email ?? null,
+    await createIOweParticipantObligations({
       amount: formData.amount ?? existing.amount,
       category: formData.category ?? existing.category,
       note: formData.note ?? existing.note,
-      createdAt: formData.created_at ?? existing.created_at,
+      created_at: formData.created_at ?? existing.created_at,
+      obligation_type: 'i_owe',
+      contact_id: formData.contact_id ?? null,
+      contact_user_id: formData.contact_user_id ?? null,
+      contact_name: formData.contact_name,
+      contact_email: formData.contact_email ?? null,
+      participants: formData.participants,
     })
     await deleteExpense(id)
     return null
@@ -420,8 +600,17 @@ export async function updateExpense(id: string, formData: Partial<ExpenseFormDat
       })
     : existing
 
-  if (nextType === 'normal') {
-    await supabase.from('personal_obligations').delete().eq('source_expense_id', id)
+  if (nextType === 'normal' && (formData.participants !== undefined || formData.obligation_type !== undefined)) {
+    const participants = getValidParticipants(formData)
+    await replaceExpenseParticipants({
+      expenseId: id,
+      userId: data.user_id,
+      participants,
+      totalAmount: formData.amount ?? data.amount,
+      category: formData.category ?? data.category,
+      note: formData.note ?? data.note,
+      createdAt: formData.created_at ?? data.created_at,
+    })
   }
 
   if (nextType === 'owe_me') {

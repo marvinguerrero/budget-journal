@@ -65,9 +65,11 @@ export const PRESET_EMOJIS_ACCOUNTS = [
 export const CATEGORY_COLORS: Record<string, string> = {
   ...Object.fromEntries(DEFAULT_CATEGORIES.map((c) => [c.name, c.color])),
   Settlement: '#6366F1',
+  'Transfer Fees': '#6366F1',
 }
 
 export const CATEGORY_ICONS: Record<string, string> = {
   ...Object.fromEntries(DEFAULT_CATEGORIES.map((c) => [c.name, c.icon])),
   Settlement: '💸',
+  'Transfer Fees': '🏦',
 }

@@ -158,6 +158,7 @@ export default function AccountsPage() {
   const [fromId,   setFromId]   = useState('')
   const [toId,     setToId]     = useState('')
   const [amount,   setAmount]   = useState('')
+  const [fee,      setFee]      = useState('0')
   const [note,     setNote]     = useState('')
   const [date,     setDate]     = useState(now.toISOString().slice(0, 10))
   const [isSaving, setIsSaving] = useState(false)
@@ -165,7 +166,7 @@ export default function AccountsPage() {
   const availableTo = useMemo(() => accounts.filter((a) => a.id !== fromId), [accounts, fromId])
 
   const resetForm = () => {
-    setFromId(''); setToId(''); setAmount(''); setNote('')
+    setFromId(''); setToId(''); setAmount(''); setFee('0'); setNote('')
     setDate(now.toISOString().slice(0, 10))
   }
 
@@ -185,7 +186,13 @@ export default function AccountsPage() {
   const handleTransfer = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const amt = parseFloat(amount)
+    const transferFee = fee.trim() === '' ? 0 : parseFloat(fee)
     if (!fromId || !toId || !amt || amt < 0.01 || fromId === toId) return
+    if (!Number.isFinite(transferFee)) return
+    if (transferFee < 0) {
+      toast.error('Transfer fee cannot be negative.')
+      return
+    }
     setIsSaving(true)
     try {
       const { createAccountTransfer } = await import('@/services/accountTransfers')
@@ -193,6 +200,7 @@ export default function AccountsPage() {
         from_account_id: fromId,
         to_account_id: toId,
         amount: amt,
+        transfer_fee: transferFee,
         note: note.trim(),
         transferred_at: new Date(date + 'T12:00:00').toISOString(),
       })
@@ -201,8 +209,8 @@ export default function AccountsPage() {
       resetForm()
       reloadAccounts()
       reloadActivity()
-    } catch {
-      toast.error('Failed to record transfer')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to record transfer')
     } finally {
       setIsSaving(false)
     }
@@ -244,6 +252,15 @@ export default function AccountsPage() {
           <Input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00"
             value={amount} onChange={(e) => setAmount(e.target.value)}
             className="pl-8 h-12 text-lg font-semibold rounded-xl" required />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label className="text-sm font-semibold">Transfer Fee (₱)</Label>
+        <div className="relative">
+          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+          <Input type="number" inputMode="decimal" min="0" step="0.01" placeholder="0.00"
+            value={fee} onChange={(e) => setFee(e.target.value)}
+            className="pl-8 h-12 text-lg font-semibold rounded-xl" />
         </div>
       </div>
       <div className="space-y-2">

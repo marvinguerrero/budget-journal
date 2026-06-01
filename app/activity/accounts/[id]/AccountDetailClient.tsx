@@ -350,6 +350,8 @@ function AccountDetailEntryItem({ entry, isLiab }: { entry: AccountDetailEntry; 
   // Transfer
   const isIn = entry.direction === 'in'
   const otherIsLiab = entry.otherAccount.category === 'liability'
+  const transferFee = entry.transferFee
+  const totalDeducted = entry.amount + transferFee
 
   let amountLabel: string
   let amountColor: string
@@ -388,6 +390,12 @@ function AccountDetailEntryItem({ entry, isLiab }: { entry: AccountDetailEntry; 
           )}
         </div>
         {entry.note && <p className="text-[10px] text-muted-foreground truncate">{entry.note}</p>}
+        <p className="text-[10px] text-muted-foreground">
+          Transferred: {formatCurrency(entry.amount)}
+          {transferFee > 0 && !isIn
+            ? ` · Fee: ${formatCurrency(transferFee)} · Total deducted: ${formatCurrency(totalDeducted)}`
+            : ` · Fee: ${formatCurrency(transferFee)}`}
+        </p>
       </div>
       <p className={cn('text-sm font-bold tabular-nums flex-shrink-0', amountColor)}>
         {amountLabel}

@@ -125,8 +125,10 @@ export function ExpenseDetailsView({
     )
   }
 
-  const { expense, account, sharedBudget, obligation } = details
+  const { expense, account, sharedBudget, obligation, obligations, participants, settlements } = details
   const isCreditCard = account && isLiabilityType(account.type)
+  const hasParticipants = participants.length > 0
+  const legacyObligation = hasParticipants ? null : obligation
 
   return (
     <div className="p-4 lg:p-5 space-y-4">
@@ -187,13 +189,52 @@ export function ExpenseDetailsView({
         </Section>
       )}
 
-      {obligation && (
+      {participants.length > 0 && (
+        <Section title="Participants">
+          <div className="space-y-3">
+            {participants.map((participant) => {
+              const linkedObligation = participant.obligation_id
+                ? obligations.find((item) => item.id === participant.obligation_id) ?? participant.personal_obligations ?? null
+                : null
+              const latestSettlement = linkedObligation
+                ? settlements.find((settlement) => settlement.obligation_id === linkedObligation.id)
+                : null
+
+              const paidAmount = participant.is_payer ? expense.amount : 0
+              const netAmount = paidAmount - participant.share_amount
+              const status = getParticipantStatus(participant, linkedObligation)
+
+              return (
+                <div key={participant.id} className="rounded-xl border border-border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{participant.participant_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {participant.participant_email || participant.participant_phone || participant.participant_kind}
+                      </p>
+                    </div>
+                    <p className="text-sm font-bold tabular-nums">{formatCurrency(participant.share_amount)}</p>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                    <StatusPill label="Paid" value={formatCurrency(paidAmount)} />
+                    <StatusPill label="Net" value={`${netAmount >= 0 ? '+' : '-'}${formatCurrency(Math.abs(netAmount))}`} />
+                    <StatusPill label="Status" value={status} />
+                    <StatusPill label="Settlement" value={latestSettlement ? formatSettlementStatus(latestSettlement.status) : 'Not started'} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Section>
+      )}
+
+      {legacyObligation && (
         <Section title="Balance Information">
-          <DetailRow label="Type" value={obligation.direction === 'owed_to_user' ? "You're Owed" : 'You Owe'} />
-          <DetailRow label="Contact" value={obligation.contact_name} />
-          <DetailRow label="Original Amount" value={formatCurrency(obligation.amount)} />
-          <DetailRow label="Remaining Amount" value={formatCurrency(obligation.remaining_amount)} />
-          <DetailRow label="Status" value={getObligationStatus(obligation)} />
+          <DetailRow label="Type" value={legacyObligation.direction === 'owed_to_user' ? "You're Owed" : 'You Owe'} />
+          <DetailRow label="Contact" value={legacyObligation.contact_name} />
+          <DetailRow label="Original Amount" value={formatCurrency(legacyObligation.amount)} />
+          <DetailRow label="Remaining Amount" value={formatCurrency(legacyObligation.remaining_amount)} />
+          <DetailRow label="Status" value={getObligationStatus(legacyObligation)} />
         </Section>
       )}
 
@@ -224,13 +265,24 @@ export function ExpenseDetailsView({
               note: expense.note,
               account_id: expense.account_id,
               created_at: expense.created_at,
-              obligation_type: obligation ? 'owe_me' : 'normal',
-              contact_id: obligation?.contact_id,
-              contact_user_id: obligation?.contact_user_id,
-              contact_name: obligation?.contact_name,
-              contact_email: obligation?.contact_email,
+              obligation_type: legacyObligation ? 'owe_me' : 'normal',
+              contact_id: legacyObligation?.contact_id,
+              contact_user_id: legacyObligation?.contact_user_id,
+              contact_name: legacyObligation?.contact_name,
+              contact_email: legacyObligation?.contact_email,
               receipt_path: expense.receipt_path,
               has_receipt: expense.has_receipt,
+              split_mode: inferSplitMode(participants),
+              participants: participants.map((participant) => ({
+                participant_kind: participant.participant_kind,
+                contact_id: participant.contact_id,
+                contact_user_id: participant.contact_user_id,
+                participant_name: participant.participant_name,
+                participant_email: participant.participant_email,
+                participant_phone: participant.participant_phone,
+                share_amount: participant.share_amount,
+                is_payer: participant.is_payer,
+              })),
             }}
             isEditing
           />
@@ -409,6 +461,15 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
   )
 }
 
+function StatusPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-muted/50 px-2 py-1">
+      <p className="text-[10px] font-medium uppercase text-muted-foreground">{label}</p>
+      <p className="font-semibold">{value}</p>
+    </div>
+  )
+}
+
 function formatDate(value: string) {
   return format(new Date(value), 'MMM d, yyyy')
 }
@@ -433,4 +494,29 @@ function getObligationStatus(obligation: ExpenseDetailsData['obligation']) {
   if (obligation.remaining_amount <= 0.005 || obligation.status === 'settled') return 'Settled'
   if (obligation.remaining_amount < obligation.amount) return 'Partially Settled'
   return 'Open'
+}
+
+function formatSettlementStatus(status: string) {
+  if (status === 'pending_confirmation') return 'Pending'
+  if (status === 'confirmed') return 'Confirmed'
+  if (status === 'recalled') return 'Recalled'
+  return status
+}
+
+function getParticipantStatus(
+  participant: ExpenseDetailsData['participants'][number],
+  obligation: ExpenseDetailsData['obligation'],
+) {
+  if (participant.is_payer) return 'Paid by this person'
+  if (!obligation) return participant.participant_kind === 'self' ? 'Your share' : 'No obligation'
+  if (obligation.direction === 'owed_to_user') return `${participant.participant_name} owes you`
+  return `You owe ${obligation.contact_name}`
+}
+
+function inferSplitMode(participants: ExpenseDetailsData['participants']) {
+  if (participants.length < 2) return 'equal'
+  const first = Number(participants[0].share_amount ?? 0)
+  return participants.every((participant) => Math.abs(Number(participant.share_amount ?? 0) - first) < 0.01)
+    ? 'equal'
+    : 'custom'
 }

@@ -147,7 +147,12 @@ export async function confirmPersonalObligationPayment(
     p_amount: amount ?? null,
     p_receiver_account_id: receiverAccountId ?? null,
   })
-  if (error) throw new Error(error.message)
+  if (error) {
+    if (error.message === 'Please select a source account.') {
+      throw new Error('The payer needs to choose a source account before this payment can be confirmed.')
+    }
+    throw new Error(error.message)
+  }
 }
 
 export async function recallPersonalObligationPayment(settlementId: string): Promise<void> {

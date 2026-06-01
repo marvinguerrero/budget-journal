@@ -12,12 +12,58 @@ import { getContacts } from '@/services/contacts'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
+import { Plus, Trash2 } from 'lucide-react'
 
 interface ExpenseFormProps {
   onSubmit: (data: ExpenseFormData) => Promise<void>
   onCancel: () => void
   initialData?: Partial<ExpenseFormData>
   isEditing?: boolean
+}
+
+type DraftParticipant = {
+  id: string
+  participant_kind: 'self' | 'contact' | 'external'
+  contact_id: string
+  participant_name: string
+  participant_email: string
+  participant_phone: string
+  share_amount: string
+  is_payer: boolean
+}
+
+function createDraftId() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID()
+  }
+
+  return `participant-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function createDraftParticipant(partial: Partial<DraftParticipant> = {}): DraftParticipant {
+  return {
+    id: createDraftId(),
+    participant_kind: 'contact',
+    contact_id: '',
+    participant_name: '',
+    participant_email: '',
+    participant_phone: '',
+    share_amount: '',
+    is_payer: false,
+    ...partial,
+  }
+}
+
+function splitAmountEqually(total: number, count: number) {
+  if (count <= 0 || total <= 0) return []
+  const totalCents = Math.round(total * 100)
+  const base = Math.floor(totalCents / count)
+  let remainder = totalCents - base * count
+  return Array.from({ length: count }, () => {
+    const cents = base + (remainder > 0 ? 1 : 0)
+    remainder -= 1
+    return (cents / 100).toFixed(2)
+  })
 }
 
 export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: ExpenseFormProps) {
@@ -28,6 +74,18 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   const [obligationType, setObligationType] = useState<'normal' | 'owe_me' | 'i_owe'>(initialData?.obligation_type ?? 'normal')
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactId, setContactId] = useState(initialData?.contact_id ?? '')
+  const [splitMode, setSplitMode] = useState<'equal' | 'custom'>(initialData?.split_mode ?? 'equal')
+  const [participants, setParticipants] = useState<DraftParticipant[]>(
+    initialData?.participants?.map((participant) => createDraftParticipant({
+      participant_kind: participant.participant_kind,
+      contact_id: participant.contact_id ?? '',
+      participant_name: participant.participant_name,
+      participant_email: participant.participant_email ?? '',
+      participant_phone: participant.participant_phone ?? '',
+      share_amount: String(participant.share_amount),
+      is_payer: participant.is_payer === true,
+    })) ?? []
+  )
   const [date, setDate] = useState(
     initialData?.created_at
       ? format(new Date(initialData.created_at), 'yyyy-MM-dd')
@@ -57,10 +115,113 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
 
   const isObligation = obligationType !== 'normal'
   const selectedContact = contacts.find((contact) => contact.id === contactId) ?? null
+  const supportsParticipants = obligationType === 'normal' || obligationType === 'i_owe'
+  const hasParticipants = participants.length > 0
+  const equalShares = splitMode === 'equal'
+    ? splitAmountEqually(parseFloat(amount) || 0, participants.length)
+    : []
+  const participantTotal = participants.reduce((sum, participant, index) => (
+    sum + (parseFloat(splitMode === 'equal' ? equalShares[index] : participant.share_amount) || 0)
+  ), 0)
+  const hasNegativeParticipantShare = participants.some((participant, index) =>
+    parseFloat(splitMode === 'equal' ? equalShares[index] : participant.share_amount) < 0
+  )
+  const participantsAreValid = !hasParticipants || (
+    participants.some((participant) => participant.is_payer)
+    && participants.every((participant, index) => (
+      participant.participant_name.trim()
+      && Number.isFinite(parseFloat(splitMode === 'equal' ? equalShares[index] : participant.share_amount))
+      && parseFloat(splitMode === 'equal' ? equalShares[index] : participant.share_amount) >= 0
+    ))
+    && Math.abs(participantTotal - (parseFloat(amount) || 0)) < 0.01
+  )
   const hasValidAmount = !!amount && parseFloat(amount) > 0
   const canSubmit = hasValidAmount
     && (!isObligation || !!selectedContact)
     && (obligationType !== 'owe_me' || !!accountId)
+    && participantsAreValid
+
+  const addParticipants = () => {
+    if (participants.length > 0) {
+      setParticipants((current) => [...current, createDraftParticipant()])
+      return
+    }
+
+    if (obligationType === 'i_owe' && selectedContact) {
+      setParticipants([
+        createDraftParticipant({
+          participant_kind: 'contact',
+          contact_id: selectedContact.id,
+          participant_name: selectedContact.name,
+          participant_email: selectedContact.email ?? '',
+          is_payer: true,
+        }),
+        createDraftParticipant({
+          participant_kind: 'self',
+          participant_name: 'Me',
+        }),
+      ])
+      return
+    }
+
+    setParticipants([
+      createDraftParticipant({
+        participant_kind: 'self',
+        participant_name: 'Me',
+        is_payer: true,
+      }),
+      createDraftParticipant(),
+    ])
+  }
+
+  const updateParticipant = (id: string, next: Partial<DraftParticipant>) => {
+    setParticipants((current) => current.map((participant) => {
+      if (participant.id !== id) return participant
+      const updated = { ...participant, ...next }
+      if (next.is_payer === true) {
+        return updated
+      }
+      return updated
+    }).map((participant) => (
+      next.is_payer === true && participant.id !== id
+        ? { ...participant, is_payer: false }
+        : participant
+    )))
+  }
+
+  const selectParticipantContact = (id: string, value: string) => {
+    if (value === 'self') {
+      updateParticipant(id, {
+        participant_kind: 'self',
+        contact_id: '',
+        participant_name: 'Me',
+        participant_email: '',
+        participant_phone: '',
+      })
+      return
+    }
+
+    if (value === 'external') {
+      updateParticipant(id, {
+        participant_kind: 'external',
+        contact_id: '',
+        participant_name: '',
+        participant_email: '',
+        participant_phone: '',
+      })
+      return
+    }
+
+    const contact = contacts.find((item) => item.id === value)
+    if (!contact) return
+    updateParticipant(id, {
+      participant_kind: 'contact',
+      contact_id: contact.id,
+      participant_name: contact.name,
+      participant_email: contact.email ?? '',
+      participant_phone: '',
+    })
+  }
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -81,6 +242,26 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
         contact_user_id: isObligation ? selectedContact?.linked_user_id ?? null : undefined,
         receipt_file: obligationType === 'i_owe' ? null : receiptFile,
         remove_receipt: obligationType === 'i_owe' ? false : removeReceipt,
+        split_mode: splitMode,
+        participants: hasParticipants
+          ? participants.map((participant, index) => {
+            const contact = participant.contact_id
+              ? contacts.find((item) => item.id === participant.contact_id)
+              : null
+            return {
+              participant_kind: participant.participant_kind,
+              contact_id: participant.contact_id || null,
+              contact_user_id: contact?.linked_user_id ?? null,
+              participant_name: participant.participant_name.trim(),
+              participant_email: participant.participant_email.trim() || null,
+              ...(participant.participant_kind === 'external' && participant.participant_phone.trim()
+                ? { participant_phone: participant.participant_phone.trim() }
+                : {}),
+              share_amount: parseFloat(splitMode === 'equal' ? equalShares[index] : participant.share_amount),
+              is_payer: participant.is_payer,
+            }
+          })
+          : undefined,
       })
     } catch {
       // Submit handlers show the specific toast; keep the form open without
@@ -180,6 +361,141 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             <p className="text-xs text-muted-foreground">
               Add contacts under <Link href="/shared/contacts" className="text-primary font-medium">Shared → Contacts</Link>.
             </p>
+          )}
+        </div>
+      )}
+
+      {supportsParticipants && (
+        <div className="space-y-3 rounded-xl border border-border p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Label className="text-sm font-semibold">Participants</Label>
+              <p className="text-xs text-muted-foreground">Optional split tracking for this expense.</p>
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={addParticipants}>
+              <Plus className="h-4 w-4" />
+              Add
+            </Button>
+          </div>
+
+          {hasParticipants && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { value: 'equal', label: 'Equal Split' },
+                  { value: 'custom', label: 'Custom Split' },
+                ] as const).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setSplitMode(option.value)}
+                    className={cn(
+                      'h-9 rounded-xl border text-xs font-semibold transition-colors',
+                      splitMode === option.value
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-card text-muted-foreground hover:bg-accent'
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                {participants.map((participant, index) => (
+                  <div key={participant.id} className="grid grid-cols-[1fr_92px_34px_34px] gap-2 items-start">
+                    <div className="space-y-2">
+                      <select
+                        value={
+                          participant.participant_kind === 'self'
+                            ? 'self'
+                            : participant.participant_kind === 'external'
+                              ? 'external'
+                              : participant.contact_id
+                        }
+                        onChange={(event) => selectParticipantContact(participant.id, event.target.value)}
+                        className="w-full h-10 rounded-xl border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="">Select participant</option>
+                        <option value="self">Me</option>
+                        {contacts.map((contact) => (
+                          <option key={contact.id} value={contact.id}>
+                            {contact.name}{contact.contact_type === 'registered' ? ' · registered' : ''}
+                          </option>
+                        ))}
+                        <option value="external">External person</option>
+                      </select>
+                      {participant.participant_kind === 'external' && (
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <Input
+                            placeholder="Name"
+                            value={participant.participant_name}
+                            onChange={(event) => updateParticipant(participant.id, { participant_name: event.target.value })}
+                            className="h-10 rounded-xl"
+                          />
+                          <Input
+                            placeholder="Email"
+                            value={participant.participant_email}
+                            onChange={(event) => updateParticipant(participant.id, { participant_email: event.target.value })}
+                            className="h-10 rounded-xl"
+                          />
+                          <Input
+                            placeholder="Phone"
+                            value={participant.participant_phone}
+                            onChange={(event) => updateParticipant(participant.id, { participant_phone: event.target.value })}
+                            className="h-10 rounded-xl"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0"
+                      value={splitMode === 'equal' ? equalShares[index] ?? '' : participant.share_amount}
+                      onChange={(event) => updateParticipant(participant.id, { share_amount: event.target.value })}
+                      disabled={splitMode === 'equal'}
+                      className="h-10 rounded-xl text-right"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => updateParticipant(participant.id, { is_payer: true })}
+                      className={cn(
+                        'h-10 rounded-xl border text-xs font-bold',
+                        participant.is_payer
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border text-muted-foreground'
+                      )}
+                      aria-label="Set as payer"
+                      title="Set as payer"
+                    >
+                      P
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setParticipants((current) => current.filter((item) => item.id !== participant.id))}
+                      className="h-10 w-10 rounded-xl p-0"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              {splitMode === 'custom' && Math.abs(participantTotal - (parseFloat(amount) || 0)) >= 0.01 && (
+                <p className="text-xs text-destructive">
+                  Custom shares must total ₱{amount || '0.00'}.
+                </p>
+              )}
+              {splitMode === 'custom' && hasNegativeParticipantShare && (
+                <p className="text-xs text-destructive">
+                  Shares cannot be negative.
+                </p>
+              )}
+            </div>
           )}
         </div>
       )}

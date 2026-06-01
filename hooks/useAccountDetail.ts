@@ -38,6 +38,7 @@ export type AccountDetailEntry =
       id: string
       date: string
       amount: number
+      transferFee: number
       note: string
       direction: 'in' | 'out'
       otherAccount: FinancialAccount
@@ -153,13 +154,31 @@ export function useAccountDetail(accountId: string) {
       for (const t of transfersOut ?? []) {
         const otherAccount = accMap.get(t.to_account_id)
         if (!otherAccount) continue
-        result.push({ kind: 'transfer', id: t.id, date: t.transferred_at, amount: t.amount, note: t.note, direction: 'out', otherAccount })
+        result.push({
+          kind: 'transfer',
+          id: t.id,
+          date: t.transferred_at,
+          amount: t.amount,
+          transferFee: Number(t.transfer_fee ?? 0),
+          note: t.note,
+          direction: 'out',
+          otherAccount,
+        })
       }
 
       for (const t of transfersIn ?? []) {
         const otherAccount = accMap.get(t.from_account_id)
         if (!otherAccount) continue
-        result.push({ kind: 'transfer', id: t.id, date: t.transferred_at, amount: t.amount, note: t.note, direction: 'in', otherAccount })
+        result.push({
+          kind: 'transfer',
+          id: t.id,
+          date: t.transferred_at,
+          amount: t.amount,
+          transferFee: Number(t.transfer_fee ?? 0),
+          note: t.note,
+          direction: 'in',
+          otherAccount,
+        })
       }
 
       for (const s of personalPaid ?? []) {
