@@ -54,3 +54,13 @@ export async function recordLoanPayment(form: LoanPaymentFormData): Promise<Loan
   if (error) throw new Error(error.message)
   return data
 }
+
+export async function cancelLoan(id: string): Promise<Loan> {
+  const supabase = createClient()
+  const { data, error } = await supabase.rpc('cancel_loan', {
+    p_loan_id: id,
+  })
+
+  if (error) throw new Error(error.message)
+  return data
+}

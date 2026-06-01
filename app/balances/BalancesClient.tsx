@@ -5,7 +5,7 @@ import { Contact, CreditCardPayment, Expense, FinancialAccount, Loan, LoanCounte
 import { getBalancesData, GroupBalanceData } from '@/services/balances'
 import { getAllExpenses } from '@/services/expenses'
 import { getCreditCardPayments, recordCreditCardPayment } from '@/services/creditCardPayments'
-import { createLoan, getLoans, recordLoanPayment } from '@/services/loans'
+import { cancelLoan, createLoan, getLoans, recordLoanPayment } from '@/services/loans'
 import { createSettlement, confirmSettlement, rejectSettlement, recallSettlement, undoConfirmSettlement } from '@/services/settlements'
 import {
   applyPersonalObligationPayment,
@@ -862,8 +862,15 @@ export function BalancesClient({ userId }: Props) {
 
   const activeLoans = useMemo(() =>
     loans
-      .filter((loan) => loan.status !== 'paid' && loan.remaining_amount > 0.005)
+      .filter((loan) => loan.status === 'active' && loan.remaining_amount > 0.005)
       .sort((a, b) => new Date(b.loan_date).getTime() - new Date(a.loan_date).getTime()),
+    [loans]
+  )
+
+  const loanHistory = useMemo(() =>
+    loans
+      .filter((loan) => loan.status === 'cancelled' || loan.status === 'fully_paid')
+      .sort((a, b) => new Date(b.updated_at ?? b.loan_date).getTime() - new Date(a.updated_at ?? a.loan_date).getTime()),
     [loans]
   )
 
@@ -1003,19 +1010,30 @@ export function BalancesClient({ userId }: Props) {
       feeResponsibility: loan.fee_responsibility ?? 'lender',
       totalLoanBalance: loan.amount,
       action: (
-        <Button
-          type="button"
-          size="sm"
-          className="h-8 rounded-lg text-xs"
-          onClick={() => {
-            setPayingLoan(loan)
-            setLoanPaymentAmount(String(loan.remaining_amount))
-            setLoanPaymentAccountId('')
-            setLoanPaymentNote('')
-          }}
-        >
-          Record Payment
-        </Button>
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 rounded-lg text-xs"
+            onClick={() => {
+              setPayingLoan(loan)
+              setLoanPaymentAmount(String(loan.remaining_amount))
+              setLoanPaymentAccountId('')
+              setLoanPaymentNote('')
+            }}
+          >
+            Record Payment
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-lg text-xs"
+            onClick={() => handleCancelLoan(loan)}
+          >
+            Cancel Loan
+          </Button>
+        </div>
       ),
     })),
     [loanReceivables]
@@ -1116,19 +1134,30 @@ export function BalancesClient({ userId }: Props) {
       feeResponsibility: loan.fee_responsibility ?? 'lender',
       totalLoanBalance: loan.amount,
       action: (
-        <Button
-          type="button"
-          size="sm"
-          className="h-8 rounded-lg text-xs"
-          onClick={() => {
-            setPayingLoan(loan)
-            setLoanPaymentAmount(String(loan.remaining_amount))
-            setLoanPaymentAccountId('')
-            setLoanPaymentNote('')
-          }}
-        >
-          Pay Loan
-        </Button>
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 rounded-lg text-xs"
+            onClick={() => {
+              setPayingLoan(loan)
+              setLoanPaymentAmount(String(loan.remaining_amount))
+              setLoanPaymentAccountId('')
+              setLoanPaymentNote('')
+            }}
+          >
+            Pay Loan
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-lg text-xs"
+            onClick={() => handleCancelLoan(loan)}
+          >
+            Cancel Loan
+          </Button>
+        </div>
       ),
     })),
     [loanPayables]
@@ -1160,6 +1189,26 @@ export function BalancesClient({ userId }: Props) {
       ),
     })),
     [creditCardPayableRecords]
+  )
+
+  const loanHistoryRows = useMemo((): BalanceListRecord[] =>
+    loanHistory.map((loan) => ({
+      id: `loan-history-${loan.id}`,
+      source: 'loan',
+      direction: loan.loan_type === 'money_lent' ? 'receivable' : 'payable',
+      person: loan.person_name,
+      balanceType: loan.loan_type === 'money_lent' ? 'Money Lent' : 'Money Borrowed',
+      originalAmount: loan.amount,
+      remainingAmount: loan.remaining_amount,
+      status: balanceStatusLabel(loan.status),
+      dueDate: loan.due_date,
+      note: loan.notes,
+      principalAmount: getLoanPrincipal(loan),
+      transferFee: getLoanTransferFee(loan),
+      feeResponsibility: loan.fee_responsibility ?? 'lender',
+      totalLoanBalance: loan.amount,
+    })),
+    [loanHistory]
   )
 
   // ── Settle handler ────────────────────────────────────────────
@@ -1461,6 +1510,18 @@ export function BalancesClient({ userId }: Props) {
     }
   }
 
+  const handleCancelLoan = async (loan: Loan) => {
+    if (!window.confirm('Are you sure you want to cancel this loan?')) return
+
+    try {
+      await cancelLoan(loan.id)
+      await Promise.all([load(), reloadAccounts()])
+      toast.success('Loan cancelled')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to cancel loan')
+    }
+  }
+
   const handleRecallPersonal = async (id: string) => {
     try {
       await recallPersonalObligationPayment(id)
@@ -1664,6 +1725,7 @@ export function BalancesClient({ userId }: Props) {
           </div>
           <BalanceRecordSection title="Money Lent" total={loanReceivableTotal} records={loanReceivableRows} emptyLabel="No money lent loans." />
           <BalanceRecordSection title="Money Borrowed" total={loanPayableTotal} records={loanPayableRows} emptyLabel="No money borrowed loans." />
+          <BalanceRecordSection title="Loan History" total={loanHistoryRows.reduce((sum, row) => sum + row.originalAmount, 0)} records={loanHistoryRows} emptyLabel="No cancelled or fully paid loans." />
 
           {loanPayments.length > 0 && (
             <div className="rounded-2xl border border-border bg-card p-4 space-y-3">

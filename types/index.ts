@@ -524,7 +524,7 @@ export interface CreditCardPayment {
 }
 
 export type LoanType = 'money_lent' | 'money_borrowed'
-export type LoanStatus = 'active' | 'partially_paid' | 'paid'
+export type LoanStatus = 'draft' | 'active' | 'cancelled' | 'fully_paid'
 export type LoanCounterpartyKind = 'registered_user' | 'contact' | 'external'
 export type LoanFeeResponsibility = 'lender' | 'borrower'
 

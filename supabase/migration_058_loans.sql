@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS public.loans (
   paid_amount        numeric(14, 2) NOT NULL DEFAULT 0 CHECK (paid_amount >= 0),
   remaining_amount   numeric(14, 2) NOT NULL CHECK (remaining_amount >= 0),
   status             text NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'partially_paid', 'paid')),
+    CHECK (status IN ('draft', 'active', 'cancelled', 'fully_paid')),
   loan_date          timestamptz NOT NULL DEFAULT now(),
   due_date           date,
   notes              text NOT NULL DEFAULT '',
@@ -75,6 +75,21 @@ ALTER TABLE public.loans
 
 ALTER TABLE public.loans
   ADD COLUMN IF NOT EXISTS fee_expense_id uuid REFERENCES public.expenses(id) ON DELETE SET NULL;
+
+UPDATE public.loans
+SET status = CASE
+  WHEN status = 'paid' THEN 'fully_paid'
+  WHEN status = 'partially_paid' THEN 'active'
+  ELSE status
+END
+WHERE status IN ('paid', 'partially_paid');
+
+ALTER TABLE public.loans
+  DROP CONSTRAINT IF EXISTS loans_status_check;
+
+ALTER TABLE public.loans
+  ADD CONSTRAINT loans_status_check
+  CHECK (status IN ('draft', 'active', 'cancelled', 'fully_paid'));
 
 CREATE TABLE IF NOT EXISTS public.loan_payments (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -332,7 +347,8 @@ BEGIN
   FOR UPDATE;
 
   IF NOT FOUND THEN RAISE EXCEPTION 'Loan not found.'; END IF;
-  IF v_loan.status = 'paid' OR v_loan.remaining_amount <= 0.005 THEN RAISE EXCEPTION 'Loan is already paid.'; END IF;
+  IF v_loan.status = 'cancelled' THEN RAISE EXCEPTION 'Loan is cancelled.'; END IF;
+  IF v_loan.status = 'fully_paid' OR v_loan.remaining_amount <= 0.005 THEN RAISE EXCEPTION 'Loan is already paid.'; END IF;
   IF p_amount > v_loan.remaining_amount + 0.005 THEN RAISE EXCEPTION 'Payment amount cannot exceed the remaining balance.'; END IF;
 
   IF NOT EXISTS (
@@ -380,8 +396,7 @@ BEGIN
   SET paid_amount = v_new_paid,
       remaining_amount = v_new_remaining,
       status = CASE
-        WHEN v_new_remaining <= 0.005 THEN 'paid'
-        WHEN v_new_paid > 0.005 THEN 'partially_paid'
+        WHEN v_new_remaining <= 0.005 THEN 'fully_paid'
         ELSE 'active'
       END
   WHERE id = p_loan_id;
@@ -390,7 +405,75 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.cancel_loan(uuid);
+CREATE OR REPLACE FUNCTION public.cancel_loan(p_loan_id uuid)
+RETURNS public.loans
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_loan loans;
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
+
+  SELECT * INTO v_loan
+  FROM public.loans
+  WHERE id = p_loan_id
+    AND user_id = v_uid
+  FOR UPDATE;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Loan not found.'; END IF;
+  IF v_loan.status != 'active' THEN RAISE EXCEPTION 'Only active loans can be cancelled.'; END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.loan_payments lp
+    WHERE lp.loan_id = p_loan_id
+      AND lp.user_id = v_uid
+  ) OR v_loan.paid_amount > 0.005 THEN
+    RAISE EXCEPTION 'This loan cannot be cancelled because payment activity already exists.';
+  END IF;
+
+  IF v_loan.account_id IS NULL THEN
+    RAISE EXCEPTION 'Loan account not found.';
+  END IF;
+
+  IF v_loan.loan_type = 'money_lent' THEN
+    UPDATE public.financial_accounts
+    SET balance = balance + CASE
+      WHEN v_loan.fee_responsibility = 'borrower' THEN v_loan.amount
+      ELSE v_loan.principal_amount
+    END
+    WHERE id = v_loan.account_id
+      AND user_id = v_uid;
+  ELSE
+    UPDATE public.financial_accounts
+    SET balance = balance - v_loan.principal_amount
+    WHERE id = v_loan.account_id
+      AND user_id = v_uid;
+  END IF;
+
+  IF v_loan.fee_expense_id IS NOT NULL THEN
+    DELETE FROM public.expenses
+    WHERE id = v_loan.fee_expense_id
+      AND user_id = v_uid;
+  END IF;
+
+  UPDATE public.loans
+  SET status = 'cancelled',
+      remaining_amount = 0,
+      fee_expense_id = NULL
+  WHERE id = p_loan_id
+  RETURNING * INTO v_loan;
+
+  RETURN v_loan;
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION public.create_loan(text, text, numeric, uuid, timestamptz, date, text, uuid, uuid, text, text, text, numeric, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.record_loan_payment(uuid, numeric, uuid, timestamptz, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_loan(uuid) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
