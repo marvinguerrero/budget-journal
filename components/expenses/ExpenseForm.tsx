@@ -14,6 +14,8 @@ import { cn } from '@/lib/utils'
 import Link from 'next/link'
 import { Plus, Trash2 } from 'lucide-react'
 
+const EXTERNAL_CONTACT_VALUE = '__external__'
+
 interface ExpenseFormProps {
   onSubmit: (data: ExpenseFormData) => Promise<void>
   onCancel: () => void
@@ -74,6 +76,8 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   const [obligationType, setObligationType] = useState<'normal' | 'owe_me' | 'i_owe'>(initialData?.obligation_type ?? 'normal')
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactId, setContactId] = useState(initialData?.contact_id ?? '')
+  const [externalContactName, setExternalContactName] = useState(initialData?.contact_id ? '' : initialData?.contact_name ?? '')
+  const [externalContactEmail, setExternalContactEmail] = useState(initialData?.contact_id ? '' : initialData?.contact_email ?? '')
   const [splitMode, setSplitMode] = useState<'equal' | 'custom'>(initialData?.split_mode ?? 'equal')
   const [participants, setParticipants] = useState<DraftParticipant[]>(
     initialData?.participants?.map((participant) => createDraftParticipant({
@@ -107,6 +111,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             (!!initialData.contact_email && contact.email?.toLowerCase() === initialData.contact_email.toLowerCase())
           )
           if (existing) setContactId(existing.id)
+          else setContactId(EXTERNAL_CONTACT_VALUE)
         }
       })
       .catch(() => { if (!cancelled) setContacts([]) })
@@ -114,7 +119,13 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   }, [contactId, initialData?.contact_email, initialData?.contact_name])
 
   const isObligation = obligationType !== 'normal'
-  const selectedContact = contacts.find((contact) => contact.id === contactId) ?? null
+  const isExternalContact = contactId === EXTERNAL_CONTACT_VALUE
+  const selectedContact = isExternalContact ? null : contacts.find((contact) => contact.id === contactId) ?? null
+  const obligationContactName = isExternalContact ? externalContactName.trim() : selectedContact?.name ?? ''
+  const obligationContactEmail = isExternalContact ? externalContactEmail.trim() || null : selectedContact?.email ?? null
+  const obligationContactUserId = isExternalContact ? null : selectedContact?.linked_user_id ?? null
+  const obligationContactId = isExternalContact ? null : selectedContact?.id ?? null
+  const obligationContactIsValid = !isObligation || Boolean(obligationContactName)
   const supportsParticipants = obligationType === 'normal' || obligationType === 'i_owe'
   const hasParticipants = participants.length > 0
   const equalShares = splitMode === 'equal'
@@ -137,7 +148,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   )
   const hasValidAmount = !!amount && parseFloat(amount) > 0
   const canSubmit = hasValidAmount
-    && (!isObligation || !!selectedContact)
+    && obligationContactIsValid
     && (obligationType !== 'owe_me' || !!accountId)
     && participantsAreValid
 
@@ -147,13 +158,13 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
       return
     }
 
-    if (obligationType === 'i_owe' && selectedContact) {
+    if (obligationType === 'i_owe' && obligationContactName) {
       setParticipants([
         createDraftParticipant({
-          participant_kind: 'contact',
-          contact_id: selectedContact.id,
-          participant_name: selectedContact.name,
-          participant_email: selectedContact.email ?? '',
+          participant_kind: isExternalContact ? 'external' : 'contact',
+          contact_id: obligationContactId ?? '',
+          participant_name: obligationContactName,
+          participant_email: obligationContactEmail ?? '',
           is_payer: true,
         }),
         createDraftParticipant({
@@ -236,10 +247,10 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
         account_id: obligationType === 'i_owe' ? null : accountId || null,
         created_at: new Date(date + 'T' + new Date().toTimeString().slice(0, 8)).toISOString(),
         obligation_type: obligationType,
-        contact_id: isObligation ? selectedContact?.id ?? null : undefined,
-        contact_name: isObligation ? selectedContact?.name : undefined,
-        contact_email: isObligation ? selectedContact?.email ?? null : undefined,
-        contact_user_id: isObligation ? selectedContact?.linked_user_id ?? null : undefined,
+        contact_id: isObligation ? obligationContactId : undefined,
+        contact_name: isObligation ? obligationContactName : undefined,
+        contact_email: isObligation ? obligationContactEmail : undefined,
+        contact_user_id: isObligation ? obligationContactUserId : undefined,
         receipt_file: obligationType === 'i_owe' ? null : receiptFile,
         remove_receipt: obligationType === 'i_owe' ? false : removeReceipt,
         split_mode: splitMode,
@@ -336,7 +347,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
       {isObligation && (
         <div className="space-y-2">
           <Label htmlFor="contactId" className="text-sm font-semibold">
-            Contact
+            {obligationType === 'i_owe' ? 'Paid By' : 'Contact'}
           </Label>
           <select
             id="contactId"
@@ -344,14 +355,30 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             onChange={(e) => setContactId(e.target.value)}
             className="w-full h-11 rounded-xl border border-input bg-background px-3 text-sm"
           >
-            <option value="">Select a contact</option>
+            <option value="">{obligationType === 'i_owe' ? 'Select who paid' : 'Select a contact'}</option>
             {contacts.map((contact) => (
               <option key={contact.id} value={contact.id}>
                 {contact.name}{contact.email ? ` · ${contact.email}` : ''}{contact.contact_type === 'registered' ? ' · registered' : ''}
               </option>
             ))}
+            <option value={EXTERNAL_CONTACT_VALUE}>External person</option>
           </select>
-          {selectedContact ? (
+          {isExternalContact ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input
+                placeholder="Name"
+                value={externalContactName}
+                onChange={(event) => setExternalContactName(event.target.value)}
+                className="h-10 rounded-xl"
+              />
+              <Input
+                placeholder="Email"
+                value={externalContactEmail}
+                onChange={(event) => setExternalContactEmail(event.target.value)}
+                className="h-10 rounded-xl"
+              />
+            </div>
+          ) : selectedContact ? (
             <p className="text-xs text-muted-foreground">
               {selectedContact.contact_type === 'registered'
                 ? `Registered user${selectedContact.email ? ` · ${selectedContact.email}` : ''}`
