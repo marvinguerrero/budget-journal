@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useTheme } from 'next-themes'
+import packageJson from '@/package.json'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,7 +20,7 @@ import { useIncomeSources } from '@/hooks/useIncomeSources'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { useFinancialAccountTypes } from '@/hooks/useFinancialAccountTypes'
 import {
-  Sun, Moon, Monitor, LogOut, User, Palette, Layers, Trash2, Pencil, Wallet, AlertTriangle, Bug,
+  Sun, Moon, Monitor, LogOut, User, Palette, Layers, Trash2, Pencil, Wallet, AlertTriangle, Bug, Info, ChevronRight, GraduationCap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
@@ -439,6 +440,35 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* About */}
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center gap-3">
+          <Info className="w-4 h-4 text-muted-foreground" />
+          <h2 className="font-semibold text-sm">Learn</h2>
+        </div>
+        <Separator />
+        <Link
+          href="/settings/help"
+          className="flex items-center justify-between gap-3 rounded-xl bg-accent/50 px-3 py-2.5 hover:bg-accent transition-colors"
+        >
+          <div>
+            <p className="text-sm font-medium">Help & Learning</p>
+            <p className="text-xs text-muted-foreground">Learn how to use the app and understand finance basics.</p>
+          </div>
+          <GraduationCap className="w-4 h-4 text-muted-foreground" />
+        </Link>
+        <Link
+          href="/settings/about"
+          className="flex items-center justify-between gap-3 rounded-xl bg-accent/50 px-3 py-2.5 hover:bg-accent transition-colors"
+        >
+          <div>
+            <p className="text-sm font-medium">Purpose, mission, and direction</p>
+            <p className="text-xs text-muted-foreground">Learn why Budget Journal exists and what it is becoming.</p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+        </Link>
+      </div>
+
       {/* Debug */}
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
         <div className="flex items-center gap-3">
@@ -707,7 +737,7 @@ export default function SettingsPage() {
       </div>
 
       <p className="text-center text-xs text-muted-foreground pb-4">
-        Budget Journal v1.0.0 · Built for simplicity
+        Budget Journal v{packageJson.version} · Built for simplicity
       </p>
 
       {/* ── Edit Category dialog ─────────────────────────────── */}

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
+import packageJson from '@/package.json'
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -12,7 +13,6 @@ import {
   Users,
   Gift,
   Target,
-  BarChart3,
   PieChart,
   Settings,
   Scale,
@@ -129,7 +129,7 @@ export function Sidebar() {
       </nav>
 
       <div className="px-4 py-4 border-t border-border">
-        <p className="text-xs text-muted-foreground text-center">Budget Journal v1.0</p>
+        <p className="text-xs text-muted-foreground text-center">Budget Journal v{packageJson.version}</p>
       </div>
     </aside>
   )
