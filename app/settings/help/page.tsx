@@ -23,6 +23,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
+import { FinancialLiteracyProgram } from '@/components/learning/FinancialLiteracyProgram'
 
 export const metadata: Metadata = {
   title: 'Help & Learning',
@@ -220,6 +221,8 @@ export default function HelpLearningPage() {
           ))}
         </div>
       </section>
+
+      <FinancialLiteracyProgram />
 
       <section className="space-y-3">
         <SectionHeading icon={Wallet} title="Financial Basics" />
