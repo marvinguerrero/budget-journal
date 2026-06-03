@@ -210,6 +210,7 @@ export interface PersonalObligationSettlement {
   confirmed_amount?: number | null
   payer_account_id: string | null
   receiver_account_id: string | null
+  expense_id?: string | null
   relationship_id?: string | null
   counterparty_settlement_id?: string | null
   status: Extract<SettlementStatus, 'pending_confirmation' | 'confirmed' | 'recalled'>
@@ -481,6 +482,7 @@ export interface SharedWishlistItem {
   product_url: string | null
   quantity: number
   status: WishlistStatus
+  created_at: string
   share_notes: boolean
   share_product_links: boolean
   share_prices: boolean

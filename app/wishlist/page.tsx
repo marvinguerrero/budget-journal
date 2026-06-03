@@ -59,6 +59,30 @@ const priorityStyles = {
   low: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
 }
 
+function getWishlistAgeDays(createdAt: string) {
+  const created = new Date(createdAt)
+  if (Number.isNaN(created.getTime())) return 0
+
+  const today = new Date()
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const startCreated = new Date(created.getFullYear(), created.getMonth(), created.getDate())
+  return Math.max(0, Math.floor((startToday.getTime() - startCreated.getTime()) / 86_400_000))
+}
+
+function formatWishlistAge(createdAt: string) {
+  const days = getWishlistAgeDays(createdAt)
+  if (days === 0) return 'Wished today'
+  if (days === 1) return 'Wished 1 day ago'
+  return `Wished ${days} days ago`
+}
+
+function formatWishlistAgeValue(createdAt: string) {
+  const days = getWishlistAgeDays(createdAt)
+  if (days === 0) return 'Today'
+  if (days === 1) return '1 day'
+  return `${days} days`
+}
+
 function blankForm(category: string): WishlistFormData {
   return {
     name: '',
@@ -84,6 +108,7 @@ export default function WishlistPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const [detailItem, setDetailItem] = useState<WishlistItem | null>(null)
+  const [sharedDetailItem, setSharedDetailItem] = useState<SharedWishlistItem | null>(null)
   const [editingItem, setEditingItem] = useState<WishlistItem | null>(null)
   const [shareMode, setShareMode] = useState<WishlistShareMode>('single')
   const [shareItemIds, setShareItemIds] = useState<string[]>([])
@@ -339,7 +364,7 @@ export default function WishlistPage() {
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-semibold text-sm truncate">{item.name}</p>
-                  <p className="text-xs text-muted-foreground">{item.category}</p>
+                  <p className="text-xs text-muted-foreground">{item.category} · {formatWishlistAge(item.created_at)}</p>
                 </div>
                 <p className="font-bold text-sm tabular-nums flex-shrink-0">{formatCurrency(item.target_amount)}</p>
               </div>
@@ -471,6 +496,7 @@ export default function WishlistPage() {
                   <Detail label="Priority" value={detailItem.priority ? detailItem.priority[0].toUpperCase() + detailItem.priority.slice(1) : 'None'} />
                   <Detail label="Quantity" value={String(detailItem.quantity)} />
                   <Detail label="Status" value={detailItem.status[0].toUpperCase() + detailItem.status.slice(1)} />
+                  <Detail label="Age" value={formatWishlistAgeValue(detailItem.created_at)} />
                 </div>
 
                 {detailItem.notes && (
@@ -540,6 +566,50 @@ export default function WishlistPage() {
                     </Button>
                   )}
                 </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!sharedDetailItem} onOpenChange={(open) => !open && setSharedDetailItem(null)}>
+        <DialogContent className="sm:max-w-md rounded-2xl max-h-[90vh] overflow-y-auto">
+          {sharedDetailItem && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{sharedDetailItem.name}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <Detail label="Shared By" value={sharedDetailItem.owner_name} />
+                  <Detail label="Category" value={sharedDetailItem.category} />
+                  <Detail label="Priority" value={sharedDetailItem.priority ? sharedDetailItem.priority[0].toUpperCase() + sharedDetailItem.priority.slice(1) : 'None'} />
+                  <Detail label="Quantity" value={String(sharedDetailItem.quantity)} />
+                  <Detail label="Status" value={sharedDetailItem.status[0].toUpperCase() + sharedDetailItem.status.slice(1)} />
+                  <Detail label="Age" value={formatWishlistAgeValue(sharedDetailItem.created_at)} />
+                  {sharedDetailItem.target_amount !== null && (
+                    <Detail label="Target" value={formatCurrency(sharedDetailItem.target_amount)} />
+                  )}
+                </div>
+
+                {sharedDetailItem.share_notes && sharedDetailItem.notes && (
+                  <div className="rounded-xl bg-muted/50 p-3">
+                    <p className="text-xs text-muted-foreground">Notes</p>
+                    <p className="text-sm mt-1">{sharedDetailItem.notes}</p>
+                  </div>
+                )}
+
+                {sharedDetailItem.share_product_links && sharedDetailItem.product_url && (
+                  <Link
+                    href={sharedDetailItem.product_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    Open Product
+                  </Link>
+                )}
               </div>
             </>
           )}
@@ -653,12 +723,20 @@ export default function WishlistPage() {
                   <p className="font-semibold text-sm">{group.owner}</p>
                   <div className="space-y-1.5">
                     {group.items.map((item) => (
-                      <div key={`${item.share_id}-${item.item_id}`} className="flex items-center justify-between gap-3 text-sm">
-                        <span className="truncate">{item.name}</span>
+                      <button
+                        key={`${item.share_id}-${item.item_id}`}
+                        type="button"
+                        onClick={() => setSharedDetailItem(item)}
+                        className="flex w-full items-center justify-between gap-3 rounded-xl p-2 text-left text-sm hover:bg-accent"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{item.name}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{item.category} · {formatWishlistAge(item.created_at)}</span>
+                        </span>
                         {item.target_amount !== null && (
                           <span className="font-semibold tabular-nums">{formatCurrency(item.target_amount)}</span>
                         )}
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
