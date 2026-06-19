@@ -37,6 +37,7 @@ export async function createPersonalObligation(payload: {
   category: string
   note: string
   sourceExpenseId?: string | null
+  sourceLineItemId?: string | null
   createdAt?: string
 }): Promise<PersonalObligation> {
   const supabase = createClient()
@@ -57,6 +58,7 @@ export async function createPersonalObligation(payload: {
       category: payload.category,
       note: payload.note,
       source_expense_id: payload.sourceExpenseId ?? null,
+      source_line_item_id: payload.sourceLineItemId ?? null,
       created_at: payload.createdAt ?? new Date().toISOString(),
     })
     .select()
@@ -73,6 +75,7 @@ export async function createRegisteredPersonalObligation(payload: {
   category: string
   note: string
   sourceExpenseId?: string | null
+  sourceLineItemId?: string | null
   createdAt?: string
 }): Promise<PersonalObligation> {
   const supabase = createClient()
@@ -87,6 +90,19 @@ export async function createRegisteredPersonalObligation(payload: {
   })
 
   if (error) throw new Error(error.message)
+
+  // The RPC doesn't know about line items (it's shared with the top-level
+  // obligation flow) — stamp the link with a follow-up update rather than
+  // touching the RPC's signature.
+  if (payload.sourceLineItemId && data?.id) {
+    const { error: linkErr } = await supabase
+      .from('personal_obligations')
+      .update({ source_line_item_id: payload.sourceLineItemId })
+      .eq('id', data.id)
+    if (linkErr) throw linkErr
+    return { ...data, source_line_item_id: payload.sourceLineItemId }
+  }
+
   return data
 }
 

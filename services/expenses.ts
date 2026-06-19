@@ -329,7 +329,7 @@ async function isConnectedRegisteredContact(contactId?: string | null) {
     && Boolean(data.linked_user_id)
 }
 
-async function createObligationForContact(payload: {
+export async function createObligationForContact(payload: {
   direction: 'owed_to_user' | 'user_owes'
   contactId?: string | null
   contactUserId?: string | null
@@ -339,6 +339,7 @@ async function createObligationForContact(payload: {
   category: string
   note: string
   sourceExpenseId?: string | null
+  sourceLineItemId?: string | null
   createdAt?: string
 }) {
   if (await isConnectedRegisteredContact(payload.contactId)) {
@@ -349,6 +350,7 @@ async function createObligationForContact(payload: {
       category: payload.category,
       note: payload.note,
       sourceExpenseId: payload.sourceExpenseId ?? null,
+      sourceLineItemId: payload.sourceLineItemId ?? null,
       createdAt: payload.createdAt,
     })
   }
@@ -462,6 +464,7 @@ export async function getExpenseDetails(id: string): Promise<ExpenseDetailsData>
       .from('expense_participants')
       .select('*, personal_obligations(*)')
       .eq('expense_id', id)
+      .is('line_item_id', null)
       .order('created_at', { ascending: true }),
     getExpenseSharedBudgetDetails(expense),
   ])

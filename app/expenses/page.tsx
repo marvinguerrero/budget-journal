@@ -10,26 +10,20 @@ import { ExpenseListSkeleton } from '@/components/common/LoadingSkeleton'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog'
 import { DEFAULT_CATEGORIES, isLiabilityType } from '@/lib/constants'
-import { formatCurrency, getMonthName, getDaysInMonth } from '@/utils/format'
+import { formatCurrency, getMonthName } from '@/utils/format'
 import { exportExpensesToExcel } from '@/utils/exportExcel'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
 import { getExpenseIntegrityIssues } from '@/lib/expenseIntegrity'
 import { Expense } from '@/types'
-import { Search, X, Download } from 'lucide-react'
+import { Search, X, Download, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
+import { BottomSheet } from '@/components/common/BottomSheet'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
   value: String(i + 1),
@@ -38,6 +32,67 @@ const MONTHS = Array.from({ length: 12 }, (_, i) => ({
 
 const YEARS = [2024, 2025, 2026].map(String)
 const MAX_RENDERED_EXPENSES = 250
+
+interface ExpenseFilters {
+  categories: string[]
+  accounts: string[]
+  accountTypes: string[]
+  expenseTypes: string[]
+  receiptStatus: string[]
+  creditCard: string[]
+  sharedStatus: string[]
+  currencies: string[]
+}
+
+const EMPTY_FILTERS: ExpenseFilters = {
+  categories: [],
+  accounts: [],
+  accountTypes: [],
+  expenseTypes: [],
+  receiptStatus: [],
+  creditCard: [],
+  sharedStatus: [],
+  currencies: [],
+}
+
+function countActiveFilters(filters: ExpenseFilters): number {
+  return Object.values(filters).reduce((sum, arr) => sum + arr.length, 0)
+}
+
+function deriveExpenseType(expense: Expense): 'personal' | 'owe_me' | 'i_owe' | 'shared_budget' {
+  if (expense.is_shared_budget_expense) return 'shared_budget'
+  const obligations = expense.personal_obligations ?? []
+  if (obligations.some((o) => o.direction === 'owed_to_user')) return 'owe_me'
+  if (obligations.some((o) => o.direction === 'user_owes')) return 'i_owe'
+  return 'personal'
+}
+
+const EXPENSE_TYPE_OPTIONS = [
+  { value: 'personal', label: 'Personal' },
+  { value: 'owe_me', label: 'Owe Me' },
+  { value: 'i_owe', label: 'I Owe' },
+  { value: 'shared_budget', label: 'Shared Budget' },
+] as const
+
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: 'asset', label: '💰 Assets' },
+  { value: 'liability', label: '💳 Liabilities' },
+] as const
+
+const RECEIPT_OPTIONS = [
+  { value: 'with', label: 'With receipt' },
+  { value: 'without', label: 'Without receipt' },
+] as const
+
+const CREDIT_CARD_OPTIONS = [
+  { value: 'yes', label: 'Credit card' },
+  { value: 'no', label: 'Not a credit card' },
+] as const
+
+const SHARED_STATUS_OPTIONS = [
+  { value: 'shared', label: 'Shared budget expense' },
+  { value: 'personal', label: 'Personal expense' },
+] as const
 
 function getExpenseDebugValue(expense: unknown, key: string) {
   if (!expense || typeof expense !== 'object') {
@@ -144,14 +199,14 @@ export default function ExpensesPage() {
   const router = useRouter()
   const isMobile = useIsMobile()
   const now = new Date()
-  const [month, setMonth] = useState(String(now.getMonth() + 1))
-  const [year, setYear] = useState(String(now.getFullYear()))
-  const [day, setDay] = useState('all')
+  const [selectedYears, setSelectedYears] = useState<string[]>([String(now.getFullYear())])
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([String(now.getMonth() + 1)])
+  const [selectedDays, setSelectedDays] = useState<string[]>([])
+  const [dateFiltersOpen, setDateFiltersOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState('all')
-  const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | 'asset' | 'liability'>('all')
-  const [accountFilter, setAccountFilter] = useState('all')
-  const [receiptFilter, setReceiptFilter] = useState<'all' | 'with' | 'without'>('all')
+  const [appliedFilters, setAppliedFilters] = useState<ExpenseFilters>(EMPTY_FILTERS)
+  const [draftFilters, setDraftFilters] = useState<ExpenseFilters>(EMPTY_FILTERS)
+  const [showFilters, setShowFilters] = useState(false)
   const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null)
   const filterSeq = useRef(0)
   const deferredSearch = useDeferredValue(search)
@@ -168,10 +223,10 @@ export default function ExpensesPage() {
     })
   }, [debugExpenses])
 
-  const targetMonth = month !== 'all' ? Number(month) : undefined
-  const targetYear = year !== 'all' ? Number(year) : undefined
-
-  const { expenses, isLoading, refetch, addExpense, updateExpense, deleteExpense } = useExpenses(targetMonth, targetYear)
+  // Multi-select years/months requires filtering across more than one
+  // month/year window, so we fetch everything once and filter client-side
+  // (consistent with the other checkbox filters, which already do this).
+  const { expenses, isLoading, refetch, addExpense, updateExpense, deleteExpense } = useExpenses()
   const { accounts } = useFinancialAccounts()
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const [isExporting, setIsExporting] = useState(false)
@@ -293,43 +348,64 @@ export default function ExpensesPage() {
       console.timeEnd('safeExpenses')
     }
   }, [expenseList, accountMap, accounts.length, skipExpenseIntegrity, debugExpenses])
-  const visibleAccounts = useMemo(() =>
-    accountTypeFilter === 'all'
-      ? accounts
-      : accounts.filter((a) => accountTypeFilter === 'liability' ? isLiabilityType(a.type) : !isLiabilityType(a.type)),
-    [accounts, accountTypeFilter]
-  )
+  const availableCurrencies = useMemo(() => {
+    const set = new Set<string>(['PHP'])
+    for (const e of safeExpenses) {
+      if (e.original_currency) set.add(e.original_currency)
+    }
+    return Array.from(set).sort()
+  }, [safeExpenses])
 
-  const daysInMonth = month !== 'all' && year !== 'all'
-    ? getDaysInMonth(Number(month), Number(year))
-    : 31
-
-  const handleMonthChange = (v: string | null) => {
-    if (!v) return
-    if (v === month) return
-    logFilterChange('month', v)
-    setMonth(v)
-    if (day !== 'all') setDay('all')
-    if (accountFilter !== 'all') setAccountFilter('all')
-    if (accountTypeFilter !== 'all') setAccountTypeFilter('all')
+  const toggleDateValue = (
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    filterName: string,
+    value: string,
+  ) => {
+    setter((prev) => {
+      const next = prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+      logFilterChange(filterName, next)
+      return next
+    })
   }
 
-  const handleYearChange = (v: string | null) => {
-    if (!v) return
-    if (v === year) return
-    logFilterChange('year', v)
-    setYear(v)
-    if (day !== 'all') setDay('all')
-    if (accountFilter !== 'all') setAccountFilter('all')
-    if (accountTypeFilter !== 'all') setAccountTypeFilter('all')
+  const allMonthValues = MONTHS.map((m) => m.value)
+  const dayValues = Array.from({ length: 31 }, (_, i) => String(i + 1))
+
+  const clearDateFilters = () => {
+    logFilterChange('clearDateFilters', true)
+    setSelectedYears([])
+    setSelectedMonths([])
+    setSelectedDays([])
   }
 
-  const handleAccountTypeFilter = (t: 'all' | 'asset' | 'liability') => {
-    if (t === accountTypeFilter && accountFilter === 'all') return
-    logFilterChange('accountType', t)
-    if (t !== accountTypeFilter) setAccountTypeFilter(t)
-    if (accountFilter !== 'all') setAccountFilter('all')
+  const dateFilterCount = selectedYears.length + selectedMonths.length + selectedDays.length
+
+  const openFilters = () => {
+    setDraftFilters(appliedFilters)
+    setShowFilters(true)
   }
+
+  const toggleDraftValue = (key: keyof ExpenseFilters, value: string) => {
+    setDraftFilters((prev) => {
+      const current = prev[key]
+      const next = current.includes(value)
+        ? current.filter((v) => v !== value)
+        : [...current, value]
+      return { ...prev, [key]: next }
+    })
+  }
+
+  const handleApplyFilters = () => {
+    logFilterChange('appliedFilters', draftFilters)
+    setAppliedFilters(draftFilters)
+    setShowFilters(false)
+  }
+
+  const handleClearDraftFilters = () => {
+    setDraftFilters(EMPTY_FILTERS)
+  }
+
+  const activeFilterCount = useMemo(() => countActiveFilters(appliedFilters), [appliedFilters])
 
   const filtered = useMemo(() => {
     const query = deferredSearch.trim().toLowerCase()
@@ -337,23 +413,44 @@ export default function ExpensesPage() {
       const note = typeof e.note === 'string' ? e.note : ''
       const category = typeof e.category === 'string' ? e.category : ''
       const sharedBudgetItem = typeof e.shared_budget_item === 'string' ? e.shared_budget_item : ''
-      const matchesDay =
-        day === 'all' || new Date(e.created_at).getDate() === Number(day)
+
+      const expDate = new Date(e.created_at)
+      const matchesYear = selectedYears.length === 0 || selectedYears.includes(String(expDate.getFullYear()))
+      const matchesMonth = selectedMonths.length === 0 || selectedMonths.includes(String(expDate.getMonth() + 1))
+      const matchesDay = selectedDays.length === 0 || selectedDays.includes(String(expDate.getDate()))
+
       const matchesSearch =
         !query ||
         note.toLowerCase().includes(query) ||
         category.toLowerCase().includes(query) ||
         sharedBudgetItem.toLowerCase().includes(query)
-      const matchesCategory = categoryFilter === 'all' || e.category === categoryFilter
-      const matchesAccount = accountFilter === 'all' || (e.account_id ?? '') === accountFilter
-      const matchesReceipt = receiptFilter === 'all'
-        || (receiptFilter === 'with' ? e.has_receipt === true : e.has_receipt !== true)
+
       const expAccount = e.account_id ? accountMap.get(e.account_id) : null
-      const matchesType = accountTypeFilter === 'all'
-        || (accountTypeFilter === 'liability' ? (!!expAccount && isLiabilityType(expAccount.type)) : (!!expAccount && !isLiabilityType(expAccount.type)))
-      return matchesDay && matchesSearch && matchesCategory && matchesAccount && matchesReceipt && matchesType
+
+      // Each group: empty selection = no filter applied (OR within the group).
+      const matchesCategory = appliedFilters.categories.length === 0
+        || appliedFilters.categories.includes(e.category)
+      const matchesAccount = appliedFilters.accounts.length === 0
+        || appliedFilters.accounts.includes(e.account_id ?? '')
+      const matchesAccountType = appliedFilters.accountTypes.length === 0
+        || (!!expAccount && appliedFilters.accountTypes.includes(isLiabilityType(expAccount.type) ? 'liability' : 'asset'))
+      const matchesExpenseType = appliedFilters.expenseTypes.length === 0
+        || appliedFilters.expenseTypes.includes(deriveExpenseType(e))
+      const matchesReceipt = appliedFilters.receiptStatus.length === 0
+        || appliedFilters.receiptStatus.includes(e.has_receipt ? 'with' : 'without')
+      const matchesCreditCard = appliedFilters.creditCard.length === 0
+        || appliedFilters.creditCard.includes(expAccount?.type === 'credit' ? 'yes' : 'no')
+      const matchesSharedStatus = appliedFilters.sharedStatus.length === 0
+        || appliedFilters.sharedStatus.includes(e.is_shared_budget_expense ? 'shared' : 'personal')
+      const matchesCurrency = appliedFilters.currencies.length === 0
+        || appliedFilters.currencies.includes(e.original_currency ?? 'PHP')
+
+      // AND across groups.
+      return matchesYear && matchesMonth && matchesDay && matchesSearch
+        && matchesCategory && matchesAccount && matchesAccountType && matchesExpenseType
+        && matchesReceipt && matchesCreditCard && matchesSharedStatus && matchesCurrency
     })
-  }, [safeExpenses, day, deferredSearch, categoryFilter, accountFilter, receiptFilter, accountTypeFilter, accountMap])
+  }, [safeExpenses, selectedYears, selectedMonths, selectedDays, deferredSearch, appliedFilters, accountMap])
 
   const totalFiltered = filtered.reduce((sum, e) => sum + e.amount, 0)
   const visibleFiltered = useMemo(
@@ -374,30 +471,24 @@ export default function ExpensesPage() {
     if (!debugExpenses) return
 
     console.debug('[expenses] filter state', {
-      month,
-      year,
-      day,
+      selectedYears,
+      selectedMonths,
+      selectedDays,
       searchLength: search.length,
       deferredSearchLength: deferredSearch.length,
-      categoryFilter,
-      accountFilter,
-      receiptFilter,
-      accountTypeFilter,
+      appliedFilters,
       sourceCount: expenseList.length,
       safeCount: safeExpenses.length,
       filteredCount: filtered.length,
       renderedCount: visibleFiltered.length,
     })
   }, [
-    month,
-    year,
-    day,
+    selectedYears,
+    selectedMonths,
+    selectedDays,
     search,
     deferredSearch,
-    categoryFilter,
-    accountFilter,
-    receiptFilter,
-    accountTypeFilter,
+    appliedFilters,
     expenseList.length,
     safeExpenses.length,
     filtered.length,
@@ -436,7 +527,13 @@ export default function ExpensesPage() {
             onClick={async () => {
               setIsExporting(true)
               try {
-                await exportExpensesToExcel(filtered, accounts, { month: targetMonth, year: targetYear, day })
+                await exportExpensesToExcel(filtered, accounts, {
+                  // Filename labels only make sense for a single value; multi-select
+                  // exports just fall back to "All-Months"/"All-Years" in the filename.
+                  month: selectedMonths.length === 1 ? Number(selectedMonths[0]) : undefined,
+                  year: selectedYears.length === 1 ? Number(selectedYears[0]) : undefined,
+                  day: selectedDays.length === 1 ? selectedDays[0] : 'all',
+                })
               } catch {
                 toast.error('Failed to export expenses')
               } finally {
@@ -451,44 +548,19 @@ export default function ExpensesPage() {
       </div>
 
       <div className="flex gap-2">
-        <Select value={month} onValueChange={handleMonthChange}>
-          <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All months</SelectItem>
-            {MONTHS.map((m) => (
-              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={year} onValueChange={handleYearChange}>
-          <SelectTrigger className="h-10 rounded-xl w-24">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All years</SelectItem>
-            {YEARS.map((y) => (
-              <SelectItem key={y} value={y}>{y}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={day} onValueChange={(v: string | null) => {
-          const next = v || 'all'
-          if (next === day) return
-          logFilterChange('day', next)
-          setDay(next)
-        }}>
-          <SelectTrigger className="h-10 rounded-xl w-24">
-            <SelectValue placeholder="All days" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All days</SelectItem>
-            {Array.from({ length: daysInMonth }, (_, i) => String(i + 1)).map((d) => (
-              <SelectItem key={d} value={d}>Day {d}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-10 rounded-xl w-full justify-between"
+          onClick={() => setDateFiltersOpen(true)}
+        >
+          <span>Date</span>
+          {dateFilterCount > 0 && (
+            <span className="rounded-full bg-primary/10 text-primary text-xs font-semibold px-2 py-0.5">
+              {dateFilterCount}
+            </span>
+          )}
+        </Button>
       </div>
 
       {/* Search */}
@@ -518,89 +590,23 @@ export default function ExpensesPage() {
         )}
       </div>
 
-      {/* Category + Account */}
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <Select value={categoryFilter} onValueChange={(v: string | null) => {
-            const next = v || 'all'
-            if (next === categoryFilter) return
-            logFilterChange('category', next)
-            setCategoryFilter(next)
-          }}>
-            <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
-              <SelectValue placeholder="All categories" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All categories</SelectItem>
-              {DEFAULT_CATEGORIES.map((cat) => (
-                <SelectItem key={cat.name} value={cat.name}>
-                  {cat.icon} {cat.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={accountFilter} onValueChange={(v: string | null) => {
-            const next = v || 'all'
-            if (next === accountFilter) return
-            logFilterChange('account', next)
-            setAccountFilter(next)
-          }}>
-            <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0">
-              <SelectValue placeholder="All accounts" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All accounts</SelectItem>
-              {visibleAccounts.map((acc) => (
-                <SelectItem key={acc.id} value={acc.id}>
-                  {acc.emoji} {acc.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <Select value={receiptFilter} onValueChange={(v: string | null) => {
-          const next = (v || 'all') as typeof receiptFilter
-          if (next === receiptFilter) return
-          logFilterChange('receipt', next)
-          setReceiptFilter(next)
-        }}>
-          <SelectTrigger className="h-10 rounded-xl w-full">
-            <SelectValue placeholder="All expenses" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All expenses</SelectItem>
-            <SelectItem value="with">With receipt</SelectItem>
-            <SelectItem value="without">Without receipt</SelectItem>
-          </SelectContent>
-        </Select>
-        {accounts.length > 0 && (
-          <div className="flex gap-2">
-            {([
-              { key: 'all',       label: 'All types' },
-              { key: 'asset',     label: '💰 Assets' },
-              { key: 'liability', label: '💳 Liabilities' },
-            ] as const).map(({ key, label }) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => handleAccountTypeFilter(key)}
-                className={cn(
-                  'flex-1 h-8 rounded-xl text-xs font-semibold border transition-colors',
-                  accountTypeFilter === key
-                    ? key === 'liability'
-                      ? 'bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400'
-                      : key === 'asset'
-                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
-                      : 'bg-primary/10 border-primary/30 text-primary'
-                    : 'bg-card border-border text-muted-foreground hover:bg-accent'
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+      {/* Filters trigger */}
+      <Button
+        type="button"
+        variant="outline"
+        className="h-10 rounded-xl w-full justify-between"
+        onClick={openFilters}
+      >
+        <span className="flex items-center gap-2">
+          <SlidersHorizontal className="w-4 h-4" />
+          Filters
+        </span>
+        {activeFilterCount > 0 && (
+          <span className="rounded-full bg-primary/10 text-primary text-xs font-semibold px-2 py-0.5">
+            {activeFilterCount}
+          </span>
         )}
-      </div>
+      </Button>
 
       {isLoading ? (
         <ExpenseListSkeleton />
@@ -609,7 +615,7 @@ export default function ExpensesPage() {
           <p className="text-4xl">💸</p>
           <p className="font-semibold">No expenses found</p>
           <p className="text-sm text-muted-foreground">
-            {search || categoryFilter !== 'all' || day !== 'all' || accountFilter !== 'all' || receiptFilter !== 'all' || accountTypeFilter !== 'all'
+            {search || dateFilterCount > 0 || activeFilterCount > 0
               ? 'Try adjusting your filters'
               : 'Add your first expense!'}
           </p>
@@ -655,6 +661,298 @@ export default function ExpensesPage() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {isMobile ? (
+        <BottomSheet open={showFilters} onClose={() => setShowFilters(false)} title="Filters">
+          <FilterPanel
+            draftFilters={draftFilters}
+            toggleDraftValue={toggleDraftValue}
+            onApply={handleApplyFilters}
+            onClearAll={handleClearDraftFilters}
+            accounts={accounts}
+            availableCurrencies={availableCurrencies}
+          />
+        </BottomSheet>
+      ) : (
+        <Dialog open={showFilters} onOpenChange={setShowFilters}>
+          <DialogContent className="sm:max-w-md rounded-2xl max-h-[85vh] overflow-y-auto">
+            <h2 className="text-lg font-bold">Filters</h2>
+            <FilterPanel
+              draftFilters={draftFilters}
+              toggleDraftValue={toggleDraftValue}
+              onApply={handleApplyFilters}
+              onClearAll={handleClearDraftFilters}
+              accounts={accounts}
+              availableCurrencies={availableCurrencies}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {isMobile ? (
+        <BottomSheet open={dateFiltersOpen} onClose={() => setDateFiltersOpen(false)} title="Date">
+          <DateFilterPanel
+            years={YEARS}
+            months={MONTHS}
+            days={dayValues}
+            selectedYears={selectedYears}
+            selectedMonths={selectedMonths}
+            selectedDays={selectedDays}
+            toggleDateValue={toggleDateValue}
+            setSelectedYears={setSelectedYears}
+            setSelectedMonths={setSelectedMonths}
+            setSelectedDays={setSelectedDays}
+            clearDateFilters={clearDateFilters}
+            selectAllMonths={() => {
+              logFilterChange('months', allMonthValues)
+              setSelectedMonths(allMonthValues)
+            }}
+            onDone={() => setDateFiltersOpen(false)}
+          />
+        </BottomSheet>
+      ) : (
+        <Dialog open={dateFiltersOpen} onOpenChange={setDateFiltersOpen}>
+          <DialogContent className="sm:max-w-md rounded-2xl max-h-[85vh] overflow-y-auto">
+            <h2 className="text-lg font-bold">Date</h2>
+            <DateFilterPanel
+              years={YEARS}
+              months={MONTHS}
+              days={dayValues}
+              selectedYears={selectedYears}
+              selectedMonths={selectedMonths}
+              selectedDays={selectedDays}
+              toggleDateValue={toggleDateValue}
+              setSelectedYears={setSelectedYears}
+              setSelectedMonths={setSelectedMonths}
+              setSelectedDays={setSelectedDays}
+              clearDateFilters={clearDateFilters}
+              selectAllMonths={() => {
+                logFilterChange('months', allMonthValues)
+                setSelectedMonths(allMonthValues)
+              }}
+              onDone={() => setDateFiltersOpen(false)}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  )
+}
+
+function FilterCheckboxGroup({
+  title, options, selected, onToggle,
+}: {
+  title: string
+  options: ReadonlyArray<{ value: string; label: string }>
+  selected: string[]
+  onToggle: (value: string) => void
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <div className="space-y-1.5">
+        {options.map((opt) => {
+          const checked = selected.includes(opt.value)
+          return (
+            <label
+              key={opt.value}
+              className={cn(
+                'flex items-center gap-2.5 rounded-xl border px-3 py-2 text-sm cursor-pointer transition-colors',
+                checked ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent'
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(opt.value)}
+                className="h-4 w-4 rounded accent-primary"
+              />
+              {opt.label}
+            </label>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function DateFilterPanel({
+  years,
+  months,
+  days,
+  selectedYears,
+  selectedMonths,
+  selectedDays,
+  toggleDateValue,
+  setSelectedYears,
+  setSelectedMonths,
+  setSelectedDays,
+  clearDateFilters,
+  selectAllMonths,
+  onDone,
+}: {
+  years: string[]
+  months: ReadonlyArray<{ value: string; label: string }>
+  days: string[]
+  selectedYears: string[]
+  selectedMonths: string[]
+  selectedDays: string[]
+  toggleDateValue: (
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    filterName: string,
+    value: string,
+  ) => void
+  setSelectedYears: React.Dispatch<React.SetStateAction<string[]>>
+  setSelectedMonths: React.Dispatch<React.SetStateAction<string[]>>
+  setSelectedDays: React.Dispatch<React.SetStateAction<string[]>>
+  clearDateFilters: () => void
+  selectAllMonths: () => void
+  onDone: () => void
+}) {
+  const activeCount = selectedYears.length + selectedMonths.length + selectedDays.length
+
+  return (
+    <div className="space-y-5 py-2">
+      <FilterCheckboxGroup
+        title="Year"
+        options={years.map((year) => ({ value: year, label: year }))}
+        selected={selectedYears}
+        onToggle={(value) => toggleDateValue(setSelectedYears, 'years', value)}
+      />
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Month</p>
+          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={selectAllMonths}>
+            All Months
+          </Button>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+          {months.map((month) => {
+            const checked = selectedMonths.includes(month.value)
+            return (
+              <label
+                key={month.value}
+                className={cn(
+                  'flex items-center gap-2 rounded-xl border px-3 py-2 text-sm cursor-pointer transition-colors',
+                  checked ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent'
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleDateValue(setSelectedMonths, 'months', month.value)}
+                  className="h-4 w-4 rounded accent-primary"
+                />
+                {month.label.slice(0, 3)}
+              </label>
+            )
+          })}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Day</p>
+        <div className="grid grid-cols-7 gap-1.5">
+          {days.map((day) => {
+            const checked = selectedDays.includes(day)
+            return (
+              <button
+                key={day}
+                type="button"
+                onClick={() => toggleDateValue(setSelectedDays, 'days', day)}
+                className={cn(
+                  'h-9 rounded-lg border text-xs font-semibold transition-colors',
+                  checked ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-accent'
+                )}
+              >
+                {day}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      <div className="flex gap-3 pt-2 sticky bottom-0 bg-background pb-1">
+        <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={clearDateFilters}>
+          Clear
+        </Button>
+        <Button type="button" className="flex-1 h-11 rounded-xl font-semibold" onClick={onDone}>
+          Done{activeCount > 0 ? ` (${activeCount})` : ''}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function FilterPanel({
+  draftFilters, toggleDraftValue, onApply, onClearAll, accounts, availableCurrencies,
+}: {
+  draftFilters: ExpenseFilters
+  toggleDraftValue: (key: keyof ExpenseFilters, value: string) => void
+  onApply: () => void
+  onClearAll: () => void
+  accounts: Array<{ id: string; emoji: string; name: string }>
+  availableCurrencies: string[]
+}) {
+  const draftCount = countActiveFilters(draftFilters)
+
+  return (
+    <div className="space-y-5 py-2">
+      <FilterCheckboxGroup
+        title="Category"
+        options={DEFAULT_CATEGORIES.map((c) => ({ value: c.name, label: `${c.icon} ${c.name}` }))}
+        selected={draftFilters.categories}
+        onToggle={(v) => toggleDraftValue('categories', v)}
+      />
+      <FilterCheckboxGroup
+        title="Source Account"
+        options={accounts.map((a) => ({ value: a.id, label: `${a.emoji} ${a.name}` }))}
+        selected={draftFilters.accounts}
+        onToggle={(v) => toggleDraftValue('accounts', v)}
+      />
+      <FilterCheckboxGroup
+        title="Source Account Type"
+        options={ACCOUNT_TYPE_OPTIONS}
+        selected={draftFilters.accountTypes}
+        onToggle={(v) => toggleDraftValue('accountTypes', v)}
+      />
+      <FilterCheckboxGroup
+        title="Expense Type"
+        options={EXPENSE_TYPE_OPTIONS}
+        selected={draftFilters.expenseTypes}
+        onToggle={(v) => toggleDraftValue('expenseTypes', v)}
+      />
+      <FilterCheckboxGroup
+        title="Receipt Status"
+        options={RECEIPT_OPTIONS}
+        selected={draftFilters.receiptStatus}
+        onToggle={(v) => toggleDraftValue('receiptStatus', v)}
+      />
+      <FilterCheckboxGroup
+        title="Credit Card"
+        options={CREDIT_CARD_OPTIONS}
+        selected={draftFilters.creditCard}
+        onToggle={(v) => toggleDraftValue('creditCard', v)}
+      />
+      <FilterCheckboxGroup
+        title="Shared Expense Status"
+        options={SHARED_STATUS_OPTIONS}
+        selected={draftFilters.sharedStatus}
+        onToggle={(v) => toggleDraftValue('sharedStatus', v)}
+      />
+      <FilterCheckboxGroup
+        title="Currency"
+        options={availableCurrencies.map((c) => ({ value: c, label: c }))}
+        selected={draftFilters.currencies}
+        onToggle={(v) => toggleDraftValue('currencies', v)}
+      />
+
+      <div className="flex gap-3 pt-2 sticky bottom-0 bg-background pb-1">
+        <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={onClearAll}>
+          Clear All
+        </Button>
+        <Button type="button" className="flex-1 h-11 rounded-xl font-semibold" onClick={onApply}>
+          Apply Filters{draftCount > 0 ? ` (${draftCount})` : ''}
+        </Button>
+      </div>
     </div>
   )
 }

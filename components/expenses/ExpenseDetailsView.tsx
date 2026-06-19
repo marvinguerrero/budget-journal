@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ExpenseForm } from './ExpenseForm'
+import { LineItemsSection } from './LineItemsSection'
 import {
   deleteExpense,
   getExpenseDetails,
@@ -179,6 +180,11 @@ export function ExpenseDetailsView({
           await loadDetails()
           onChanged?.()
         }}
+      />
+
+      <LineItemsSection
+        expense={expense}
+        onChanged={() => onChanged?.()}
       />
 
       {isCreditCard && account && (

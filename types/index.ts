@@ -207,6 +207,8 @@ export interface PersonalObligation {
   category: string
   note: string
   source_expense_id: string | null
+  /** Set when this obligation was generated from a receipt line item rather than the whole expense. */
+  source_line_item_id?: string | null
   status: PersonalObligationStatus
   created_at: string
   settled_at: string | null
@@ -357,6 +359,8 @@ export interface ExpenseParticipant {
   share_amount: number
   is_payer: boolean
   obligation_id: string | null
+  /** Set when this participant row belongs to a "Shared" line item split rather than the whole expense. */
+  line_item_id?: string | null
   created_at: string
   personal_obligations?: PersonalObligation | null
 }
@@ -389,6 +393,58 @@ export interface ExpenseDetailsData {
   obligations: PersonalObligation[]
   settlements: PersonalObligationSettlement[]
   participants: ExpenseParticipant[]
+}
+
+export type LineItemAssignedType = 'personal' | 'owe_me' | 'i_owe' | 'shared'
+
+export interface ExpenseLineItem {
+  id: string
+  expense_id: string
+  user_id: string
+  description: string
+  category: string | null
+  /** Native-currency amount as entered, e.g. ¥2,000. */
+  original_amount: number
+  /** Defaults from the parent expense's original_currency. */
+  original_currency: string
+  /** Always server-computed: original_amount × exchange_rate_used. Never client-trusted. */
+  converted_amount: number
+  /** Always 'PHP' today. */
+  base_currency: string
+  /** Defaults from the parent expense's exchange_rate_used. */
+  exchange_rate_used: number
+  assigned_type: LineItemAssignedType
+  assigned_contact_id: string | null
+  /** Set for owe_me/i_owe line items — the generated personal_obligations row. */
+  obligation_id: string | null
+  notes: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ExpenseLineItemFormData {
+  description: string
+  category?: string | null
+  /** Native-currency amount as entered, e.g. 2000 for ¥2,000. */
+  original_amount: number
+  assigned_type: LineItemAssignedType
+  notes?: string
+  // owe_me / i_owe
+  contact_id?: string | null
+  contact_user_id?: string | null
+  contact_name?: string
+  contact_email?: string | null
+  // shared
+  split_mode?: ExpenseSplitMode
+  participants?: ExpenseParticipantFormData[]
+}
+
+export interface LineItemAllocation {
+  nativeTotal: number
+  allocated: number
+  unallocated: number
+  isFullyAllocated: boolean
+  percentAllocated: number
 }
 
 export interface Budget {
