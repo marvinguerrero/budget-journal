@@ -38,6 +38,7 @@ export async function createAccountTransfer(form: AccountTransferFormData): Prom
     p_note: form.note,
     p_transferred_at: form.transferred_at,
     p_transfer_fee: transferFee,
+    p_destination_amount: form.destination_amount ?? null,
   })
 
   if (error) throw new Error(error.message)

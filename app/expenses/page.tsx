@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils'
 import { getExpenseIntegrityIssues } from '@/lib/expenseIntegrity'
 import { Expense } from '@/types'
 import { Search, X, Download } from 'lucide-react'
+import { toast } from 'sonner'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
   value: String(i + 1),
@@ -173,6 +174,7 @@ export default function ExpensesPage() {
   const { expenses, isLoading, refetch, addExpense, updateExpense, deleteExpense } = useExpenses(targetMonth, targetYear)
   const { accounts } = useFinancialAccounts()
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
+  const [isExporting, setIsExporting] = useState(false)
   const skipExpenseIntegrity = shouldSkipExpenseIntegrity()
   const expenseList = useMemo(() => {
     if (Array.isArray(expenses)) {
@@ -430,11 +432,20 @@ export default function ExpensesPage() {
             size="sm"
             variant="outline"
             className="h-9 rounded-xl gap-1.5 text-xs"
-            disabled={filtered.length === 0}
-            onClick={() => exportExpensesToExcel(filtered, { month: targetMonth, year: targetYear, day })}
+            disabled={filtered.length === 0 || isExporting}
+            onClick={async () => {
+              setIsExporting(true)
+              try {
+                await exportExpensesToExcel(filtered, accounts, { month: targetMonth, year: targetYear, day })
+              } catch {
+                toast.error('Failed to export expenses')
+              } finally {
+                setIsExporting(false)
+              }
+            }}
           >
             <Download className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Export</span>
+            <span className="hidden sm:inline">{isExporting ? 'Exporting...' : 'Export'}</span>
           </Button>
         </div>
       </div>

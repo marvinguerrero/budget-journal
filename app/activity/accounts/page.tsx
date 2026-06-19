@@ -6,7 +6,7 @@ import { useAccountActivity } from '@/hooks/useAccountActivity'
 import { deleteExpense } from '@/services/expenses'
 import { deleteIncomeEntry } from '@/services/incomeEntries'
 import { deleteAccountTransfer } from '@/services/accountTransfers'
-import { ACCOUNT_TYPES } from '@/lib/constants'
+import { ACCOUNT_TYPES, getCurrencySymbol, isForeignCurrency } from '@/lib/constants'
 import { formatCurrency, getMonthName } from '@/utils/format'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
@@ -39,6 +39,11 @@ const YEARS = ['2024', '2025', '2026']
 function displayBalance(acc: FinancialAccount) {
   if (acc.category === 'liability') {
     return acc.balance < 0 ? `${formatCurrency(Math.abs(acc.balance))} owed` : 'No debt'
+  }
+  if (isForeignCurrency(acc.currency_code, acc.base_currency_code)) {
+    const symbol = getCurrencySymbol(acc.currency_code)
+    const native = (acc.foreign_balance ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 })
+    return `${symbol}${native}`
   }
   return formatCurrency(acc.balance)
 }
@@ -158,6 +163,7 @@ export default function AccountsPage() {
   const [fromId,   setFromId]   = useState('')
   const [toId,     setToId]     = useState('')
   const [amount,   setAmount]   = useState('')
+  const [destinationAmount, setDestinationAmount] = useState('')
   const [fee,      setFee]      = useState('0')
   const [note,     setNote]     = useState('')
   const [date,     setDate]     = useState(now.toISOString().slice(0, 10))
@@ -165,8 +171,19 @@ export default function AccountsPage() {
 
   const availableTo = useMemo(() => accounts.filter((a) => a.id !== fromId), [accounts, fromId])
 
+  const fromAccount = useMemo(() => accounts.find((a) => a.id === fromId), [accounts, fromId])
+  const toAccount   = useMemo(() => accounts.find((a) => a.id === toId), [accounts, toId])
+  const fromIsForeign = !!fromAccount && isForeignCurrency(fromAccount.currency_code, fromAccount.base_currency_code)
+  const toIsForeign   = !!toAccount   && isForeignCurrency(toAccount.currency_code, toAccount.base_currency_code)
+  // v1 scope: only PHP (base) → foreign-currency exchanges are supported.
+  const isExchange       = toIsForeign && !fromIsForeign
+  const isUnsupportedFx  = fromIsForeign // foreign→PHP or foreign→foreign — not yet supported
+  const exchangeRatePreview = isExchange && amount && destinationAmount && parseFloat(destinationAmount) > 0
+    ? parseFloat(amount) / parseFloat(destinationAmount)
+    : null
+
   const resetForm = () => {
-    setFromId(''); setToId(''); setAmount(''); setFee('0'); setNote('')
+    setFromId(''); setToId(''); setAmount(''); setDestinationAmount(''); setFee('0'); setNote('')
     setDate(now.toISOString().slice(0, 10))
   }
 
@@ -193,6 +210,15 @@ export default function AccountsPage() {
       toast.error('Transfer fee cannot be negative.')
       return
     }
+    if (isUnsupportedFx) {
+      toast.error('Transfers out of a foreign-currency account are not yet supported.')
+      return
+    }
+    const destAmt = isExchange ? parseFloat(destinationAmount) : null
+    if (isExchange && (!destAmt || destAmt <= 0)) {
+      toast.error('Enter the amount received in the destination currency.')
+      return
+    }
     setIsSaving(true)
     try {
       const { createAccountTransfer } = await import('@/services/accountTransfers')
@@ -200,6 +226,7 @@ export default function AccountsPage() {
         from_account_id: fromId,
         to_account_id: toId,
         amount: amt,
+        destination_amount: destAmt,
         transfer_fee: transferFee,
         note: note.trim(),
         transferred_at: new Date(date + 'T12:00:00').toISOString(),
@@ -245,8 +272,14 @@ export default function AccountsPage() {
           </SelectContent>
         </Select>
       </div>
+      {isUnsupportedFx && (
+        <p className="text-xs text-destructive rounded-xl border border-destructive/30 bg-destructive/5 p-2.5">
+          Transfers out of a foreign-currency account aren't supported yet — only PHP → foreign-currency
+          exchanges are. Pick a PHP account as the source.
+        </p>
+      )}
       <div className="space-y-2">
-        <Label className="text-sm font-semibold">Amount (₱)</Label>
+        <Label className="text-sm font-semibold">{isExchange ? 'From Amount (₱)' : 'Amount (₱)'}</Label>
         <div className="relative">
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
           <Input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00"
@@ -254,6 +287,29 @@ export default function AccountsPage() {
             className="pl-8 h-12 text-lg font-semibold rounded-xl" required />
         </div>
       </div>
+      {isExchange && toAccount && (
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold">
+            To Amount ({getCurrencySymbol(toAccount.currency_code)} {toAccount.currency_code})
+          </Label>
+          <div className="relative">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">
+              {getCurrencySymbol(toAccount.currency_code)}
+            </span>
+            <Input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00"
+              value={destinationAmount} onChange={(e) => setDestinationAmount(e.target.value)}
+              className="pl-8 h-12 text-lg font-semibold rounded-xl" required />
+          </div>
+          {exchangeRatePreview !== null && (
+            <p className="text-xs text-muted-foreground">
+              Exchange rate: ₱{exchangeRatePreview.toFixed(4)} per {toAccount.currency_code} 1
+              {toAccount.average_exchange_rate
+                ? ` · current account average: ₱${toAccount.average_exchange_rate.toFixed(4)}`
+                : ' · this will establish the account\'s starting average rate'}
+            </p>
+          )}
+        </div>
+      )}
       <div className="space-y-2">
         <Label className="text-sm font-semibold">Transfer Fee (₱)</Label>
         <div className="relative">
@@ -271,8 +327,12 @@ export default function AccountsPage() {
         <Label className="text-sm font-semibold">Date</Label>
         <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-11 rounded-xl" />
       </div>
-      <Button type="submit" disabled={isSaving || !fromId || !toId || fromId === toId} className="w-full h-12 rounded-xl text-base font-semibold mt-2">
-        {isSaving ? 'Transferring…' : 'Transfer'}
+      <Button
+        type="submit"
+        disabled={isSaving || !fromId || !toId || fromId === toId || isUnsupportedFx || (isExchange && !destinationAmount)}
+        className="w-full h-12 rounded-xl text-base font-semibold mt-2"
+      >
+        {isSaving ? 'Transferring…' : isExchange ? 'Exchange & Transfer' : 'Transfer'}
       </Button>
     </form>
   )
@@ -544,6 +604,7 @@ function AccountGroup({
 
 function AccountCard({ acc }: { acc: FinancialAccount }) {
   const isLiab = acc.category === 'liability'
+  const isForeign = isForeignCurrency(acc.currency_code, acc.base_currency_code)
   const typeInfo = ACCOUNT_TYPES.find((t) => t.value === acc.type)
   return (
     <Link href={`/activity/accounts/${acc.id}`} className="flex items-center gap-3 p-4 rounded-2xl border border-border bg-card hover:bg-accent/30 active:scale-[0.99] transition-all">
@@ -555,12 +616,18 @@ function AccountCard({ acc }: { acc: FinancialAccount }) {
         <p className="text-[10px] text-muted-foreground">
           {typeInfo?.label ?? acc.type}
           {isLiab && <span className="ml-1 text-amber-500">· Liability</span>}
+          {isForeign && <span className="ml-1 text-primary">· {acc.currency_code}</span>}
         </p>
       </div>
       <div className="text-right flex-shrink-0">
         <p className={cn('text-base font-bold tabular-nums', balanceColor(acc))}>
           {displayBalance(acc)}
         </p>
+        {isForeign && (
+          <p className="text-[10px] text-muted-foreground">
+            ≈ {formatCurrency(acc.balance)}
+          </p>
+        )}
         <div className="flex items-center justify-end gap-0.5 mt-0.5">
           {isLiab
             ? acc.balance < 0

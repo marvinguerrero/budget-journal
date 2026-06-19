@@ -40,6 +40,29 @@ export const PRESET_EMOJIS_INCOME = [
   '💡','🌐','📦','🎯','🏆','⭐','🎪','🎓',
 ]
 
+export const BASE_CURRENCY_CODE = 'PHP'
+
+export const CURRENCIES = [
+  { code: 'PHP', label: 'Philippine Peso', symbol: '₱' },
+  { code: 'USD', label: 'US Dollar',       symbol: '$' },
+  { code: 'JPY', label: 'Japanese Yen',    symbol: '¥' },
+  { code: 'KRW', label: 'Korean Won',      symbol: '₩' },
+  { code: 'EUR', label: 'Euro',            symbol: '€' },
+  { code: 'GBP', label: 'British Pound',   symbol: '£' },
+  { code: 'SGD', label: 'Singapore Dollar', symbol: 'S$' },
+  { code: 'AUD', label: 'Australian Dollar', symbol: 'A$' },
+  { code: 'HKD', label: 'Hong Kong Dollar', symbol: 'HK$' },
+  { code: 'CNY', label: 'Chinese Yuan',    symbol: '¥' },
+] as const
+
+export function getCurrencySymbol(code: string): string {
+  return CURRENCIES.find((c) => c.code === code)?.symbol ?? code
+}
+
+export function isForeignCurrency(currencyCode?: string | null, baseCurrencyCode?: string | null): boolean {
+  return !!currencyCode && currencyCode !== (baseCurrencyCode ?? BASE_CURRENCY_CODE)
+}
+
 export const ACCOUNT_TYPES = [
   { value: 'cash',       label: 'Cash',        emoji: '💵', category: 'asset'     },
   { value: 'bank',       label: 'Bank',        emoji: '🏦', category: 'asset'     },

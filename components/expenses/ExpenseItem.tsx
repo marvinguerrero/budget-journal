@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Expense, ExpenseFormData } from '@/types'
-import { CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/constants'
+import { CATEGORY_ICONS, CATEGORY_COLORS, getCurrencySymbol } from '@/lib/constants'
 import { formatCurrency, formatShortDate } from '@/utils/format'
 import {
   Dialog,
@@ -103,8 +103,15 @@ export function ExpenseItem({ expense, onUpdate, onDelete, onOpenDetails, accoun
           </div>
         </div>
         <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
-          <span className="font-bold text-sm tabular-nums">
-            {formatCurrency(expense.amount)}
+          <span className="font-bold text-sm tabular-nums text-right">
+            {expense.original_currency ? (
+              <>
+                <span className="block">{getCurrencySymbol(expense.original_currency)}{(expense.original_amount ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
+                <span className="block text-[10px] font-normal text-muted-foreground">({formatCurrency(expense.amount)})</span>
+              </>
+            ) : (
+              formatCurrency(expense.amount)
+            )}
           </span>
           {!isSharedBudgetExpense && (
             <DropdownMenu>

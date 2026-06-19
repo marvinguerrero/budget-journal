@@ -110,7 +110,9 @@ async function getExpenseById(id: string): Promise<Expense> {
 
 function toExpenseUpdate(formData: Partial<ExpenseFormData>) {
   return {
-    ...(formData.amount !== undefined ? { amount: formData.amount } : {}),
+    // original_amount is paired with amount so the currency-conversion trigger always
+    // re-derives the native value fresh, instead of falling back to a stale prior value.
+    ...(formData.amount !== undefined ? { amount: formData.amount, original_amount: formData.amount } : {}),
     ...(formData.category !== undefined ? { category: formData.category } : {}),
     ...(formData.note !== undefined ? { note: formData.note } : {}),
     ...(formData.account_id !== undefined ? { account_id: formData.account_id || null } : {}),
@@ -506,6 +508,10 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
     .insert({
       user_id: user.id,
       amount: formData.amount,
+      // Paired with amount: the currency-conversion trigger treats this as the
+      // native amount entered. For base-currency accounts it's a no-op (cleared
+      // back to null); for foreign accounts, `data.amount` comes back as PHP.
+      original_amount: formData.amount,
       category: formData.category,
       note: formData.note,
       account_id: formData.account_id || null,
@@ -516,6 +522,9 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
 
   if (error) throw error
 
+  // Use data.amount (post-trigger, guaranteed PHP) rather than formData.amount
+  // (which is the native foreign-currency value for foreign-account expenses) —
+  // personal obligations and splits are always PHP-denominated.
   if (formData.obligation_type === 'owe_me') {
     if (!formData.contact_name?.trim()) throw new Error('Contact is required')
     await createObligationForContact({
@@ -524,7 +533,7 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
       contactUserId: formData.contact_user_id ?? null,
       contactName: formData.contact_name,
       contactEmail: formData.contact_email ?? null,
-      amount: formData.amount,
+      amount: data.amount,
       category: formData.category,
       note: formData.note,
       sourceExpenseId: data.id,
@@ -539,7 +548,7 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
         expenseId: data.id,
         userId: user.id,
         participants,
-        totalAmount: formData.amount,
+        totalAmount: data.amount,
         category: formData.category,
         note: formData.note,
         createdAt: data.created_at,
@@ -606,7 +615,9 @@ export async function updateExpense(id: string, formData: Partial<ExpenseFormDat
       expenseId: id,
       userId: data.user_id,
       participants,
-      totalAmount: formData.amount ?? data.amount,
+      // data.amount is authoritative post-write (PHP-converted for foreign accounts);
+      // formData.amount would be the native foreign-currency value, which is wrong here.
+      totalAmount: data.amount ?? formData.amount,
       category: formData.category ?? data.category,
       note: formData.note ?? data.note,
       createdAt: formData.created_at ?? data.created_at,

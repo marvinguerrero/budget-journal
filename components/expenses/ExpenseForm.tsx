@@ -9,6 +9,9 @@ import { ReceiptField } from './ReceiptField'
 import { AccountSelector } from '@/components/accounts/AccountSelector'
 import { Contact, ExpenseFormData } from '@/types'
 import { getContacts } from '@/services/contacts'
+import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
+import { getCurrencySymbol, isForeignCurrency } from '@/lib/constants'
+import { formatCurrency } from '@/utils/format'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
@@ -118,6 +121,27 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
     return () => { cancelled = true }
   }, [contactId, initialData?.contact_email, initialData?.contact_name])
 
+  const { accounts } = useFinancialAccounts()
+  const selectedAccount = accounts.find((a) => a.id === accountId)
+  const isForeignAccount = !!selectedAccount && isForeignCurrency(selectedAccount.currency_code, selectedAccount.base_currency_code)
+  const hasExchangeRate = isForeignAccount && !!selectedAccount?.average_exchange_rate && selectedAccount.average_exchange_rate > 0
+  const currencySymbol = isForeignAccount && selectedAccount ? getCurrencySymbol(selectedAccount.currency_code) : '₱'
+  const convertedPreview = isForeignAccount && hasExchangeRate && amount
+    ? (parseFloat(amount) || 0) * (selectedAccount?.average_exchange_rate ?? 0)
+    : null
+  // Participant splitting always works in PHP; foreign-currency amounts are
+  // entered natively, so combining the two would mix units. Scoped out for now.
+  const blocksParticipants = obligationType === 'normal' && isForeignAccount
+
+  // If the user had added participants and then switches to a foreign-currency
+  // account, clear them automatically — otherwise the (now-hidden) section would
+  // leave canSubmit permanently blocked with no visible way to fix it.
+  useEffect(() => {
+    if (blocksParticipants && participants.length > 0) {
+      setParticipants([])
+    }
+  }, [blocksParticipants, participants.length])
+
   const isObligation = obligationType !== 'normal'
   const isExternalContact = contactId === EXTERNAL_CONTACT_VALUE
   const selectedContact = isExternalContact ? null : contacts.find((contact) => contact.id === contactId) ?? null
@@ -126,7 +150,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   const obligationContactUserId = isExternalContact ? null : selectedContact?.linked_user_id ?? null
   const obligationContactId = isExternalContact ? null : selectedContact?.id ?? null
   const obligationContactIsValid = !isObligation || Boolean(obligationContactName)
-  const supportsParticipants = obligationType === 'normal' || obligationType === 'i_owe'
+  const supportsParticipants = (obligationType === 'normal' || obligationType === 'i_owe') && !blocksParticipants
   const hasParticipants = participants.length > 0
   const equalShares = splitMode === 'equal'
     ? splitAmountEqually(parseFloat(amount) || 0, participants.length)
@@ -150,6 +174,8 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   const canSubmit = hasValidAmount
     && obligationContactIsValid
     && (obligationType !== 'owe_me' || !!accountId)
+    && (!isForeignAccount || hasExchangeRate)
+    && (!blocksParticipants || !hasParticipants)
     && participantsAreValid
 
   const addParticipants = () => {
@@ -285,9 +311,11 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-2">
-        <Label htmlFor="amount" className="text-sm font-semibold">Amount (₱)</Label>
+        <Label htmlFor="amount" className="text-sm font-semibold">
+          Amount ({currencySymbol}{isForeignAccount ? ` ${selectedAccount?.currency_code}` : ''})
+        </Label>
         <div className="relative">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold text-lg">₱</span>
+          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold text-lg">{currencySymbol}</span>
           <Input
             id="amount"
             type="number"
@@ -301,6 +329,17 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             required
           />
         </div>
+        {isForeignAccount && !hasExchangeRate && (
+          <p className="text-xs text-destructive rounded-xl border border-destructive/30 bg-destructive/5 p-2.5">
+            "{selectedAccount?.name}" has no exchange rate yet — fund it with a currency exchange transfer
+            (Activity → Accounts → Transfer) before recording an expense against it.
+          </p>
+        )}
+        {convertedPreview !== null && (
+          <p className="text-xs text-muted-foreground">
+            ≈ {formatCurrency(convertedPreview)} at the account's average rate
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -556,6 +595,12 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             No account will be deducted now because someone else paid. You can settle this from Balances later.
           </p>
         </div>
+      )}
+
+      {blocksParticipants && (
+        <p className="text-xs text-muted-foreground">
+          Splitting with participants isn't available for foreign-currency account expenses yet.
+        </p>
       )}
 
       {obligationType !== 'i_owe' && (

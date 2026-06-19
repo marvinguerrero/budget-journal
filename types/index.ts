@@ -79,6 +79,16 @@ export interface FinancialAccount {
   last_statement_date?: string | null
   current_statement_date?: string | null
   current_due_date?: string | null
+  /** ISO 4217-style code, e.g. 'PHP', 'JPY', 'USD'. Defaults to 'PHP'. */
+  currency_code: string
+  /** Always 'PHP' today; stored per-account for future multi-base-currency support. */
+  base_currency_code: string
+  /** Native-currency running balance. Only populated when currency_code !== base_currency_code. */
+  foreign_balance?: number | null
+  /** PHP cost-basis running balance for foreign accounts; mirrors `balance`. */
+  base_cost_balance?: number | null
+  /** Weighted-average PHP cost per 1 unit of foreign currency. Updates only on funding transfers. */
+  average_exchange_rate?: number | null
   created_at: string
 }
 
@@ -93,6 +103,7 @@ export interface FinancialAccountFormData {
   soa_day?: number | null
   due_day?: number | null
   last_statement_date?: string | null
+  currency_code?: string
 }
 
 export type IncomeStatus = 'expected' | 'received'
@@ -316,6 +327,14 @@ export interface Expense {
   credit_due_date?: string | null
   receipt_path?: string | null
   has_receipt?: boolean
+  /** Native-currency amount as entered, when account_id points to a foreign-currency account. */
+  original_amount?: number | null
+  /** Currency code of original_amount, e.g. 'JPY'. Null for base-currency (PHP) expenses. */
+  original_currency?: string | null
+  /** PHP equivalent of original_amount. Mirrors `amount` when original_currency is set. */
+  converted_amount?: number | null
+  /** The account's average_exchange_rate at the moment this expense was posted. */
+  exchange_rate_used?: number | null
   created_at: string
   updated_at?: string | null
   personal_obligations?: PersonalObligation[]
@@ -505,6 +524,12 @@ export interface AccountTransfer {
   note: string
   transferred_at: string
   created_at: string
+  /** Native foreign-currency amount received. Only set for currency exchange transfers. */
+  destination_amount?: number | null
+  source_currency?: string | null
+  destination_currency?: string | null
+  /** PHP cost per 1 unit of destination currency for this specific exchange (amount / destination_amount). */
+  exchange_rate?: number | null
 }
 
 export interface AccountTransferFormData {
@@ -514,6 +539,8 @@ export interface AccountTransferFormData {
   transfer_fee?: number
   note: string
   transferred_at: string
+  /** Set this to perform a currency exchange transfer (from must be base-currency, to must be foreign). */
+  destination_amount?: number | null
 }
 
 export interface CreditCardPayment {

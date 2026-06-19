@@ -27,6 +27,7 @@ import { useAuth } from '@/hooks/useAuth'
 import {
   ACCOUNT_TYPES, PRESET_COLORS, PRESET_EMOJIS_CATEGORIES,
   PRESET_EMOJIS_INCOME, PRESET_EMOJIS_ACCOUNTS, isLiabilityType,
+  CURRENCIES, isForeignCurrency,
 } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
 import type { AccountCategory, AccountType, Category, FinancialAccountType, IncomeSource } from '@/types'
@@ -193,6 +194,7 @@ export default function SettingsPage() {
   const [accSoaDay, setAccSoaDay] = useState('')
   const [accDueDay, setAccDueDay] = useState('')
   const [accLastStatementDate, setAccLastStatementDate] = useState('')
+  const [accCurrency, setAccCurrency] = useState('PHP')
 
   // ── Account edit state ───────────────────────────────────────
   const [editingAcc,     setEditingAcc]     = useState<string | null>(null)
@@ -237,9 +239,13 @@ export default function SettingsPage() {
   const handleCreateAcc = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsSavingAcc(true)
-    const rawBalance = parseFloat(accBalance) || 0
     const category = accountTypeCategory(accType)
     const isCreditCard = isCreditCardType(accType)
+    const isForeign = category === 'asset' && accCurrency !== 'PHP'
+    // Foreign-currency accounts must start at zero — funded afterward via a
+    // currency exchange transfer, which establishes the average rate. The DB
+    // also enforces this server-side; we mirror it here for a clean UI.
+    const rawBalance = isForeign ? 0 : parseFloat(accBalance) || 0
     const balance = category === 'liability' ? -(Math.abs(rawBalance)) : rawBalance
     try {
       await addAccount({
@@ -249,6 +255,7 @@ export default function SettingsPage() {
         type: accType,
         category,
         balance,
+        currency_code: isForeign ? accCurrency : 'PHP',
         credit_limit: isCreditCard ? Number(accCreditLimit) : null,
         soa_day: isCreditCard ? Number(accSoaDay) : null,
         due_day: isCreditCard ? Number(accDueDay) : null,
@@ -256,7 +263,7 @@ export default function SettingsPage() {
       })
       setShowCreateAcc(false)
       setAccName(''); setAccEmoji('🏦'); setAccType('bank'); setAccBalance('0'); setAccColor('#3B82F6')
-      setAccCreditLimit(''); setAccSoaDay(''); setAccDueDay(''); setAccLastStatementDate('')
+      setAccCreditLimit(''); setAccSoaDay(''); setAccDueDay(''); setAccLastStatementDate(''); setAccCurrency('PHP')
     } finally {
       setIsSavingAcc(false)
     }
@@ -845,6 +852,21 @@ export default function SettingsPage() {
               <Label className="text-sm font-semibold">Color</Label>
               <ColorPicker value={accColor} onChange={setAccColor} />
             </div>
+            {accountTypeCategory(accType) === 'asset' && (
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">
+                  Currency <span className="text-muted-foreground font-normal">(for foreign travel cash)</span>
+                </Label>
+                <Select value={accCurrency} onValueChange={(v: string | null) => v && setAccCurrency(v)}>
+                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CURRENCIES.map((c) => (
+                      <SelectItem key={c.code} value={c.code}>{c.symbol} {c.code} — {c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-2">
               <Label className="text-sm font-semibold">
                 {isCreatingCreditCard ? 'Current Outstanding Balance (₱)' : accountTypeCategory(accType) === 'liability' ? 'Current Debt (₱)' : 'Current Balance (₱)'}
@@ -852,15 +874,23 @@ export default function SettingsPage() {
               {accountTypeCategory(accType) === 'liability' && !isCreatingCreditCard && (
                 <p className="text-[10px] text-muted-foreground">Enter amount currently owed (positive number)</p>
               )}
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
-                <Input
-                  type="number" inputMode="decimal" step="0.01" min="0"
-                  placeholder="0.00" value={accBalance}
-                  onChange={(e) => setAccBalance(e.target.value)}
-                  className="pl-7 h-11 rounded-xl"
-                />
-              </div>
+              {isForeignCurrency(accCurrency) ? (
+                <p className="text-xs text-muted-foreground rounded-xl border border-border bg-muted/30 p-2.5">
+                  Foreign-currency accounts start at zero. Fund this account with a currency exchange transfer
+                  from a PHP account (Activity → Accounts → Transfer) once it's created — that's what establishes
+                  the exchange rate.
+                </p>
+              ) : (
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">₱</span>
+                  <Input
+                    type="number" inputMode="decimal" step="0.01" min="0"
+                    placeholder="0.00" value={accBalance}
+                    onChange={(e) => setAccBalance(e.target.value)}
+                    className="pl-7 h-11 rounded-xl"
+                  />
+                </div>
+              )}
             </div>
             {isCreatingCreditCard && (
               <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-3">

@@ -24,7 +24,7 @@ import {
 } from '@/services/receipts'
 import { ExpenseDetailsData, ExpenseFormData } from '@/types'
 import { formatCurrency } from '@/utils/format'
-import { isLiabilityType } from '@/lib/constants'
+import { isLiabilityType, getCurrencySymbol } from '@/lib/constants'
 import {
   Camera,
   Download,
@@ -156,6 +156,20 @@ export function ExpenseDetailsView({
         <DetailRow label="Created Date" value={formatDateTime(expense.created_at)} />
         <DetailRow label="Last Updated Date" value={expense.updated_at ? formatDateTime(expense.updated_at) : 'Not tracked'} />
       </Section>
+
+      {expense.original_currency && (
+        <Section title="Foreign Currency">
+          <DetailRow
+            label="Foreign Amount"
+            value={`${getCurrencySymbol(expense.original_currency)}${(expense.original_amount ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${expense.original_currency}`}
+          />
+          <DetailRow label="Converted Amount" value={formatCurrency(expense.converted_amount ?? expense.amount)} />
+          <DetailRow
+            label="Exchange Rate Used"
+            value={expense.exchange_rate_used ? `₱${expense.exchange_rate_used.toFixed(4)} per ${expense.original_currency} 1` : 'Not recorded'}
+          />
+        </Section>
+      )}
 
       <ReceiptDetailsSection
         expenseId={expense.id}
