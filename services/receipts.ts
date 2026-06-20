@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
+import { createActionTrace } from '@/lib/performance'
 
 const RECEIPT_BUCKET = 'receipts'
 const MAX_RECEIPT_SIZE = 10 * 1024 * 1024
@@ -71,42 +72,69 @@ export async function uploadExpenseReceipt(params: {
   createdAt: string
   file: File
 }) {
-  validateReceiptFile(params.file)
+  const trace = createActionTrace('service.receipt.upload', {
+    sizeBytes: params.file.size,
+    type: params.file.type,
+  })
 
-  const supabase = createClient()
-  const createdAt = new Date(params.createdAt)
-  const year = String(createdAt.getFullYear())
-  const month = String(createdAt.getMonth() + 1).padStart(2, '0')
-  const extension = getReceiptExtension(params.file) ?? 'jpg'
-  const timestamp = Date.now()
-  const path = `${params.userId}/${year}/${month}/${params.expenseId}-${timestamp}.${extension}`
+  try {
+    trace.mark('validation.start')
+    validateReceiptFile(params.file)
+    trace.mark('validation.done')
 
-  const { error } = await supabase.storage
-    .from(RECEIPT_BUCKET)
-    .upload(path, params.file, {
-      cacheControl: '3600',
-      contentType: getReceiptContentType(params.file),
-      upsert: false,
-    })
+    const supabase = createClient()
+    const createdAt = new Date(params.createdAt)
+    const year = String(createdAt.getFullYear())
+    const month = String(createdAt.getMonth() + 1).padStart(2, '0')
+    const extension = getReceiptExtension(params.file) ?? 'jpg'
+    const timestamp = Date.now()
+    const path = `${params.userId}/${year}/${month}/${params.expenseId}-${timestamp}.${extension}`
 
-  if (error) throw new Error(error.message)
-  return path
+    const { error } = await trace.step('storage.upload.receipt', () =>
+      supabase.storage
+        .from(RECEIPT_BUCKET)
+        .upload(path, params.file, {
+          cacheControl: '3600',
+          contentType: getReceiptContentType(params.file),
+          upsert: false,
+        })
+    )
+
+    if (error) throw new Error(error.message)
+    return path
+  } finally {
+    trace.end()
+  }
 }
 
 export async function deleteReceiptFile(path?: string | null) {
   if (!path) return
 
+  const trace = createActionTrace('service.receipt.delete')
   const supabase = createClient()
-  const { error } = await supabase.storage.from(RECEIPT_BUCKET).remove([path])
-  if (error) throw new Error(error.message)
+  try {
+    const { error } = await trace.step('storage.delete.receipt', () =>
+      supabase.storage.from(RECEIPT_BUCKET).remove([path])
+    )
+    if (error) throw new Error(error.message)
+  } finally {
+    trace.end()
+  }
 }
 
 export async function getReceiptSignedUrl(path: string) {
+  const trace = createActionTrace('service.receipt.signed_url')
   const supabase = createClient()
-  const { data, error } = await supabase.storage
-    .from(RECEIPT_BUCKET)
-    .createSignedUrl(path, 60 * 5)
+  try {
+    const { data, error } = await trace.step('storage.create_signed_url', () =>
+      supabase.storage
+        .from(RECEIPT_BUCKET)
+        .createSignedUrl(path, 60 * 5)
+    )
 
-  if (error) throw new Error(error.message)
-  return data.signedUrl
+    if (error) throw new Error(error.message)
+    return data.signedUrl
+  } finally {
+    trace.end()
+  }
 }

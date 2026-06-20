@@ -27,6 +27,7 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { toast } from 'sonner'
+import { createActionTrace, perfNow } from '@/lib/performance'
 
 const now = new Date()
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
@@ -202,27 +203,44 @@ export default function AccountsPage() {
 
   const handleTransfer = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    const trace = createActionTrace('ui.account_transfer.submit')
+    const validationStart = perfNow()
     const amt = parseFloat(amount)
     const transferFee = fee.trim() === '' ? 0 : parseFloat(fee)
-    if (!fromId || !toId || !amt || amt < 0.01 || fromId === toId) return
-    if (!Number.isFinite(transferFee)) return
+    if (!fromId || !toId || !amt || amt < 0.01 || fromId === toId) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'invalid_accounts_or_amount' })
+      trace.end()
+      return
+    }
+    if (!Number.isFinite(transferFee)) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'invalid_fee' })
+      trace.end()
+      return
+    }
     if (transferFee < 0) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'negative_fee' })
+      trace.end()
       toast.error('Transfer fee cannot be negative.')
       return
     }
     if (isUnsupportedFx) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'unsupported_fx' })
+      trace.end()
       toast.error('Transfers out of a foreign-currency account are not yet supported.')
       return
     }
     const destAmt = isExchange ? parseFloat(destinationAmount) : null
     if (isExchange && (!destAmt || destAmt <= 0)) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'missing_destination_amount' })
+      trace.end()
       toast.error('Enter the amount received in the destination currency.')
       return
     }
+    trace.measure('validation', validationStart, { valid: true })
     setIsSaving(true)
     try {
-      const { createAccountTransfer } = await import('@/services/accountTransfers')
-      await createAccountTransfer({
+      const { createAccountTransfer } = await trace.step('import.account_transfer_service', () => import('@/services/accountTransfers'))
+      await trace.step('service.create_account_transfer', () => createAccountTransfer({
         from_account_id: fromId,
         to_account_id: toId,
         amount: amt,
@@ -230,16 +248,23 @@ export default function AccountsPage() {
         transfer_fee: transferFee,
         note: note.trim(),
         transferred_at: new Date(date + 'T12:00:00').toISOString(),
-      })
+      }))
       toast.success('Transfer recorded!')
       setShowTransfer(false)
       resetForm()
-      reloadAccounts()
-      reloadActivity()
+      const refreshTrace = createActionTrace('accounts.background_refetch.after_transfer')
+      void refreshTrace.step('refetch.accounts_and_activity', async () => {
+        await Promise.all([reloadAccounts(), reloadActivity()])
+      })
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : 'Failed to refresh account activity')
+        })
+        .finally(() => refreshTrace.end())
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to record transfer')
     } finally {
       setIsSaving(false)
+      trace.end()
     }
   }
 

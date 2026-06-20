@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/client'
 import { IncomeEntry, IncomeEntryFormData } from '@/types'
+import { createActionTrace } from '@/lib/performance'
 
 export async function getIncomeEntries(month?: number, year?: number): Promise<IncomeEntry[]> {
   const supabase = createClient()
@@ -20,35 +21,56 @@ export async function getIncomeEntries(month?: number, year?: number): Promise<I
 }
 
 export async function createIncomeEntry(form: IncomeEntryFormData): Promise<IncomeEntry> {
+  const trace = createActionTrace('service.income.create', { status: form.status ?? 'expected' })
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
-  const { data, error } = await supabase
-    .from('income_entries')
-    .insert({ user_id: user.id, status: 'expected', ...form })
-    .select()
-    .single()
-  if (error) throw error
-  return data
+  try {
+    const { data: { user } } = await trace.step('supabase.auth.get_user', () => supabase.auth.getUser())
+    if (!user) throw new Error('Not authenticated')
+    const { data, error } = await trace.step('supabase.insert.income_entry_with_balance_trigger', () =>
+      supabase
+        .from('income_entries')
+        .insert({ user_id: user.id, status: 'expected', ...form })
+        .select()
+        .single()
+    )
+    if (error) throw error
+    return data
+  } finally {
+    trace.end()
+  }
 }
 
 export async function updateIncomeEntry(
   id: string,
   form: Partial<IncomeEntryFormData>
 ): Promise<IncomeEntry> {
+  const trace = createActionTrace('service.income.update')
   const supabase = createClient()
-  const { data, error } = await supabase
-    .from('income_entries')
-    .update(form)
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+  try {
+    const { data, error } = await trace.step('supabase.update.income_entry_with_balance_trigger', () =>
+      supabase
+        .from('income_entries')
+        .update(form)
+        .eq('id', id)
+        .select()
+        .single()
+    )
+    if (error) throw error
+    return data
+  } finally {
+    trace.end()
+  }
 }
 
 export async function deleteIncomeEntry(id: string): Promise<void> {
+  const trace = createActionTrace('service.income.delete')
   const supabase = createClient()
-  const { error } = await supabase.from('income_entries').delete().eq('id', id)
-  if (error) throw error
+  try {
+    const { error } = await trace.step('supabase.delete.income_entry_with_balance_trigger', () =>
+      supabase.from('income_entries').delete().eq('id', id)
+    )
+    if (error) throw error
+  } finally {
+    trace.end()
+  }
 }

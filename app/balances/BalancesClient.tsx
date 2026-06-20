@@ -30,6 +30,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
+import { createActionTrace, perfNow } from '@/lib/performance'
 import { toast } from 'sonner'
 import {
   Clock, CreditCard, Plus, Undo2,
@@ -1233,31 +1234,45 @@ export function BalancesClient({ userId }: Props) {
   // ── Settle handler ────────────────────────────────────────────
   const handleSettle = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!settleTarget) return
+    const trace = createActionTrace('ui.shared_settlement.submit_create')
+    const validationStart = perfNow()
+    if (!settleTarget) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'missing_target' })
+      trace.end()
+      return
+    }
     if (!settleAccountId) {
+      trace.measure('validation', validationStart, { valid: false })
+      trace.end()
       toast.error('Please select a source account.')
       return
     }
+    trace.measure('validation', validationStart, { valid: true })
     setIsSavingSettle(true)
     try {
-      await createSettlement({
+      await trace.step('service.create_shared_settlement', () => createSettlement({
         groupId:        settleTarget.groupId,
         receiverUserId: settleTarget.counterpartyId,
         receiverEmail:  settleTarget.counterpartyEmail,
         amount:         settleTarget.amount,
         payerAccountId: settleAccountId || null,
         note:           settleNote,
-      })
-      // Refresh data to reflect new pending settlement
-      await load()
+      }))
       setSettleTarget(null)
       setSettleAccountId('')
       setSettleNote('')
+      const refreshTrace = createActionTrace('balances.background_refetch.after_shared_settlement')
+      void refreshTrace.step('refetch.balances', () => load())
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : 'Failed to refresh balances')
+        })
+        .finally(() => refreshTrace.end())
       toast.success('Payment sent — waiting for confirmation')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to send settlement')
     } finally {
       setIsSavingSettle(false)
+      trace.end()
     }
   }
 
@@ -1283,13 +1298,23 @@ export function BalancesClient({ userId }: Props) {
 
   const handlePersonalSettle = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!personalTarget) return
+    const trace = createActionTrace('ui.personal_settlement.submit')
+    const validationStart = perfNow()
+    if (!personalTarget) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'missing_target' })
+      trace.end()
+      return
+    }
     if (!personalAccountId) {
+      trace.measure('validation', validationStart, { valid: false })
+      trace.end()
       toast.error('Please select a source account.')
       return
     }
+    trace.measure('validation', validationStart, { valid: true })
     setIsSavingPersonal(true)
     try {
+      const successLabel = personalTarget.obligation.resolved_contact_type === 'external' ? 'Payment recorded' : 'Payment marked'
       const payload = {
         obligationId: personalTarget.obligation.id,
         amount: personalTarget.obligation.display_remaining_amount,
@@ -1298,93 +1323,135 @@ export function BalancesClient({ userId }: Props) {
       }
 
       if (personalTarget.obligation.resolved_contact_type === 'external') {
-        await recordExternalPersonalObligationPayment(payload)
+        await trace.step('service.record_external_personal_payment', () => recordExternalPersonalObligationPayment(payload))
       } else {
-        await applyPersonalObligationPayment(payload)
+        await trace.step('service.apply_personal_payment', () => applyPersonalObligationPayment(payload))
       }
-      await load()
       setPersonalTarget(null)
       setPersonalAccountId('')
       setPersonalNote('')
-      toast.success(personalTarget.obligation.resolved_contact_type === 'external' ? 'Payment recorded' : 'Payment marked')
+      const refreshTrace = createActionTrace('balances.background_refetch.after_personal_settlement')
+      void refreshTrace.step('refetch.balances', () => load())
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : 'Failed to refresh balances')
+        })
+        .finally(() => refreshTrace.end())
+      toast.success(successLabel)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to settle')
     } finally {
       setIsSavingPersonal(false)
+      trace.end()
     }
   }
 
   const handleReviewConfirm = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!reviewTarget) return
+    const trace = createActionTrace('ui.settlement_review.submit_confirm', { kind: reviewTarget?.kind })
+    if (!reviewTarget) {
+      trace.end({ skipped: true })
+      return
+    }
 
+    const validationStart = perfNow()
     const amount = Number(reviewAmount)
     const maxAmount = reviewTarget.settlement.amount
     if (!Number.isFinite(amount) || amount <= 0) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'invalid_amount' })
+      trace.end()
       toast.error('Settlement amount must be greater than zero')
       return
     }
     if (amount > maxAmount + 0.005) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'amount_exceeds_remaining' })
+      trace.end()
       toast.error('Settlement amount cannot exceed the remaining balance')
       return
     }
     if (!reviewAccountId) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'missing_account' })
+      trace.end()
       toast.error('Please select a destination account.')
       return
     }
+    trace.measure('validation', validationStart, { valid: true })
 
     setIsSavingReview(true)
     try {
       if (reviewTarget.kind === 'shared') {
-        await confirmSettlement(reviewTarget.settlement.id, reviewAccountId || null, amount)
+        await trace.step('service.confirm_shared_settlement', () => confirmSettlement(reviewTarget.settlement.id, reviewAccountId || null, amount))
       } else {
-        await confirmPersonalObligationPayment(reviewTarget.settlement.id, amount, reviewAccountId || null)
+        await trace.step('service.confirm_personal_settlement', () => confirmPersonalObligationPayment(reviewTarget.settlement.id, amount, reviewAccountId || null))
       }
-      await load()
       closeReview()
+      const refreshTrace = createActionTrace('balances.background_refetch.after_confirm')
+      void refreshTrace.step('refetch.balances', () => load())
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : 'Failed to refresh balances')
+        })
+        .finally(() => refreshTrace.end())
       toast.success(amount >= maxAmount - 0.005 ? 'Payment confirmed' : 'Partial payment confirmed')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to confirm payment')
     } finally {
       setIsSavingReview(false)
+      trace.end()
     }
   }
 
   const handleCardPayment = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!payingCard) return
+    const trace = createActionTrace('ui.credit_card_payment.submit')
+    if (!payingCard) {
+      trace.end({ skipped: true })
+      return
+    }
+    const validationStart = perfNow()
     const amount = Number(cardPaymentAmount)
 
     if (!cardPaymentSourceId) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'missing_account' })
+      trace.end()
       toast.error('Please select a source account.')
       return
     }
     if (!Number.isFinite(amount) || amount <= 0) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'invalid_amount' })
+      trace.end()
       toast.error('Payment amount must be greater than zero')
       return
     }
     if (amount > Math.abs(payingCard.balance) + 0.005) {
+      trace.measure('validation', validationStart, { valid: false, reason: 'amount_exceeds_balance' })
+      trace.end()
       toast.error('Payment amount cannot exceed the outstanding balance')
       return
     }
+    trace.measure('validation', validationStart, { valid: true })
 
     setIsSavingCardPayment(true)
     try {
-      await recordCreditCardPayment({
+      await trace.step('service.record_credit_card_payment', () => recordCreditCardPayment({
         creditCardAccountId: payingCard.id,
         sourceAccountId: cardPaymentSourceId,
         amount,
         paidAt: new Date().toISOString(),
-      })
-      await Promise.all([load(), reloadAccounts()])
+      }))
       setPayingCard(null)
       setCardPaymentSourceId('')
       setCardPaymentAmount('')
+      const refreshTrace = createActionTrace('balances.background_refetch.after_credit_card_payment')
+      void refreshTrace.step('refetch.balances_and_accounts', () => Promise.all([load(), reloadAccounts()]))
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : 'Failed to refresh balances')
+        })
+        .finally(() => refreshTrace.end())
       toast.success('Credit card payment recorded')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to record payment')
     } finally {
       setIsSavingCardPayment(false)
+      trace.end()
     }
   }
 

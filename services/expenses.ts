@@ -12,6 +12,7 @@ import {
 } from '@/types'
 import { createPersonalObligation, createRegisteredPersonalObligation } from './personalObligations'
 import { deleteReceiptFile, uploadExpenseReceipt } from './receipts'
+import { createActionTrace } from '@/lib/performance'
 
 const EXPENSE_SELECT = '*, personal_obligations(*), expense_participants(*)'
 const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
@@ -269,48 +270,62 @@ async function setExpenseReceipt(params: {
   expense: Pick<Expense, 'id' | 'user_id' | 'created_at' | 'receipt_path'>
   file: File
 }) {
+  const trace = createActionTrace('service.expense.set_receipt', { sizeBytes: params.file.size })
   const supabase = createClient()
-  const nextPath = await uploadExpenseReceipt({
-    userId: params.expense.user_id,
-    expenseId: params.expense.id,
-    createdAt: params.expense.created_at,
-    file: params.file,
-  })
+  try {
+    const nextPath = await trace.step('storage.upload.receipt', () => uploadExpenseReceipt({
+      userId: params.expense.user_id,
+      expenseId: params.expense.id,
+      createdAt: params.expense.created_at,
+      file: params.file,
+    }))
 
-  const { error } = await supabase
-    .from('expenses')
-    .update({
-      receipt_path: nextPath,
-      has_receipt: true,
-    })
-    .eq('id', params.expense.id)
+    const { error } = await trace.step('supabase.update.expense_receipt_metadata', () =>
+      supabase
+        .from('expenses')
+        .update({
+          receipt_path: nextPath,
+          has_receipt: true,
+        })
+        .eq('id', params.expense.id)
+    )
 
-  if (error) {
-    await deleteReceiptFile(nextPath)
-    throw error
-  }
+    if (error) {
+      await trace.step('storage.rollback_uploaded_receipt', () => deleteReceiptFile(nextPath))
+      throw error
+    }
 
-  if (params.expense.receipt_path) {
-    await deleteReceiptFile(params.expense.receipt_path)
+    if (params.expense.receipt_path) {
+      await trace.step('storage.delete_previous_receipt', () => deleteReceiptFile(params.expense.receipt_path))
+    }
+  } finally {
+    trace.end()
   }
 }
 
 async function clearExpenseReceipt(expense: Pick<Expense, 'id' | 'receipt_path'>) {
+  const trace = createActionTrace('service.expense.clear_receipt')
   const supabase = createClient()
 
-  if (expense.receipt_path) {
-    await deleteReceiptFile(expense.receipt_path)
+  try {
+    if (expense.receipt_path) {
+      await trace.step('storage.delete_receipt', () => deleteReceiptFile(expense.receipt_path))
+    }
+
+    const { error } = await trace.step('supabase.update.expense_receipt_metadata', () =>
+      supabase
+        .from('expenses')
+        .update({
+          receipt_path: null,
+          has_receipt: false,
+        })
+        .eq('id', expense.id)
+    )
+
+    if (error) throw error
+  } finally {
+    trace.end()
   }
-
-  const { error } = await supabase
-    .from('expenses')
-    .update({
-      receipt_path: null,
-      has_receipt: false,
-    })
-    .eq('id', expense.id)
-
-  if (error) throw error
 }
 
 async function isConnectedRegisteredContact(contactId?: string | null) {
@@ -497,193 +512,225 @@ export async function getExpenseDetails(id: string): Promise<ExpenseDetailsData>
 }
 
 export async function createExpense(formData: ExpenseFormData): Promise<Expense | null> {
+  const trace = createActionTrace('service.expense.create', {
+    hasReceipt: Boolean(formData.receipt_file),
+    obligationType: formData.obligation_type ?? 'normal',
+  })
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
+  try {
+    const { data: { user } } = await trace.step('supabase.auth.get_user', () => supabase.auth.getUser())
+    if (!user) throw new Error('Not authenticated')
 
-  if (formData.obligation_type === 'i_owe') {
-    await createIOweParticipantObligations(formData)
-    return null
-  }
-
-  const { data, error } = await supabase
-    .from('expenses')
-    .insert({
-      user_id: user.id,
-      amount: formData.amount,
-      // Paired with amount: the currency-conversion trigger treats this as the
-      // native amount entered. For base-currency accounts it's a no-op (cleared
-      // back to null); for foreign accounts, `data.amount` comes back as PHP.
-      original_amount: formData.amount,
-      category: formData.category,
-      note: formData.note,
-      account_id: formData.account_id || null,
-      created_at: formData.created_at || new Date().toISOString(),
-    })
-    .select()
-    .single()
-
-  if (error) throw error
-
-  // Use data.amount (post-trigger, guaranteed PHP) rather than formData.amount
-  // (which is the native foreign-currency value for foreign-account expenses) —
-  // personal obligations and splits are always PHP-denominated.
-  if (formData.obligation_type === 'owe_me') {
-    if (!formData.contact_name?.trim()) throw new Error('Contact is required')
-    await createObligationForContact({
-      direction: 'owed_to_user',
-      contactId: formData.contact_id ?? null,
-      contactUserId: formData.contact_user_id ?? null,
-      contactName: formData.contact_name,
-      contactEmail: formData.contact_email ?? null,
-      amount: data.amount,
-      category: formData.category,
-      note: formData.note,
-      sourceExpenseId: data.id,
-      createdAt: formData.created_at,
-    })
-  }
-
-  if ((formData.obligation_type ?? 'normal') === 'normal') {
-    const participants = getValidParticipants(formData)
-    if (participants.length > 0) {
-      await replaceExpenseParticipants({
-        expenseId: data.id,
-        userId: user.id,
-        participants,
-        totalAmount: data.amount,
-        category: formData.category,
-        note: formData.note,
-        createdAt: data.created_at,
-      })
-    }
-  }
-
-  if (formData.receipt_file) {
-    await setExpenseReceipt({
-      expense: {
-        id: data.id,
-        user_id: user.id,
-        created_at: data.created_at,
-        receipt_path: data.receipt_path ?? null,
-      },
-      file: formData.receipt_file,
-    })
-  }
-
-  return getExpenseById(data.id)
-}
-
-export async function updateExpense(id: string, formData: Partial<ExpenseFormData>): Promise<Expense | null> {
-  const supabase = createClient()
-  const existing = await getExpenseById(id)
-  const currentObligation = getLegacyOweMeObligation(existing)
-  const nextType = formData.obligation_type
-    ?? (currentObligation ? 'owe_me' : 'normal')
-
-  if (nextType === 'i_owe') {
-    await createIOweParticipantObligations({
-      amount: formData.amount ?? existing.amount,
-      category: formData.category ?? existing.category,
-      note: formData.note ?? existing.note,
-      created_at: formData.created_at ?? existing.created_at,
-      obligation_type: 'i_owe',
-      contact_id: formData.contact_id ?? null,
-      contact_user_id: formData.contact_user_id ?? null,
-      contact_name: formData.contact_name,
-      contact_email: formData.contact_email ?? null,
-      participants: formData.participants,
-    })
-    await deleteExpense(id)
-    return null
-  }
-
-  const baseUpdate = toExpenseUpdate(formData)
-  const data = Object.keys(baseUpdate).length > 0
-    ? await supabase
-      .from('expenses')
-      .update(baseUpdate)
-      .eq('id', id)
-      .select()
-      .single()
-      .then(({ data: updated, error }) => {
-        if (error) throw error
-        return updated
-      })
-    : existing
-
-  if (nextType === 'normal' && (formData.participants !== undefined || formData.obligation_type !== undefined)) {
-    const participants = getValidParticipants(formData)
-    await replaceExpenseParticipants({
-      expenseId: id,
-      userId: data.user_id,
-      participants,
-      // data.amount is authoritative post-write (PHP-converted for foreign accounts);
-      // formData.amount would be the native foreign-currency value, which is wrong here.
-      totalAmount: data.amount ?? formData.amount,
-      category: formData.category ?? data.category,
-      note: formData.note ?? data.note,
-      createdAt: formData.created_at ?? data.created_at,
-    })
-  }
-
-  if (nextType === 'owe_me') {
-    const latest = await getExpenseById(data.id)
-    const latestObligation = latest.personal_obligations?.find((o) => o.direction === 'owed_to_user')
-
-    if (!formData.contact_name?.trim() && !latestObligation?.contact_name) {
-      throw new Error('Contact is required')
+    if (formData.obligation_type === 'i_owe') {
+      await trace.step('service.create_i_owe_obligation', () => createIOweParticipantObligations(formData))
+      return null
     }
 
-    if (latestObligation) {
-      const { error: obligationErr } = await supabase
-        .from('personal_obligations')
-        .update({
-          contact_user_id: formData.contact_user_id ?? latestObligation.contact_user_id,
-          contact_id: formData.contact_id ?? latestObligation.contact_id ?? null,
-          contact_name: formData.contact_name?.trim() || latestObligation.contact_name,
-          contact_email: formData.contact_email ?? latestObligation.contact_email,
+    const { data, error } = await trace.step('supabase.insert.expense_with_balance_trigger', () =>
+      supabase
+        .from('expenses')
+        .insert({
+          user_id: user.id,
+          amount: formData.amount,
+          // Paired with amount: the currency-conversion trigger treats this as the
+          // native amount entered. For base-currency accounts it's a no-op (cleared
+          // back to null); for foreign accounts, `data.amount` comes back as PHP.
+          original_amount: formData.amount,
+          category: formData.category,
+          note: formData.note,
+          account_id: formData.account_id || null,
+          created_at: formData.created_at || new Date().toISOString(),
         })
-        .eq('id', latestObligation.id)
-      if (obligationErr) throw obligationErr
-    } else {
-      await createObligationForContact({
+        .select()
+        .single()
+    )
+
+    if (error) throw error
+
+    // Use data.amount (post-trigger, guaranteed PHP) rather than formData.amount
+    // (which is the native foreign-currency value for foreign-account expenses) —
+    // personal obligations and splits are always PHP-denominated.
+    if (formData.obligation_type === 'owe_me') {
+      if (!formData.contact_name?.trim()) throw new Error('Contact is required')
+      await trace.step('service.create_obligation', () => createObligationForContact({
         direction: 'owed_to_user',
         contactId: formData.contact_id ?? null,
         contactUserId: formData.contact_user_id ?? null,
-        contactName: formData.contact_name ?? '',
+        contactName: formData.contact_name!,
         contactEmail: formData.contact_email ?? null,
-        amount: formData.amount ?? data.amount,
+        amount: data.amount,
+        category: formData.category,
+        note: formData.note,
+        sourceExpenseId: data.id,
+        createdAt: formData.created_at,
+      }))
+    }
+
+    if ((formData.obligation_type ?? 'normal') === 'normal') {
+      const participants = getValidParticipants(formData)
+      if (participants.length > 0) {
+        await trace.step('service.replace_expense_participants', () => replaceExpenseParticipants({
+          expenseId: data.id,
+          userId: user.id,
+          participants,
+          totalAmount: data.amount,
+          category: formData.category,
+          note: formData.note,
+          createdAt: data.created_at,
+        }))
+      }
+    }
+
+    if (formData.receipt_file) {
+      await trace.step('service.set_receipt', () => setExpenseReceipt({
+        expense: {
+          id: data.id,
+          user_id: user.id,
+          created_at: data.created_at,
+          receipt_path: data.receipt_path ?? null,
+        },
+        file: formData.receipt_file!,
+      }))
+    }
+
+    return trace.step('supabase.select.created_expense_details', () => getExpenseById(data.id))
+  } finally {
+    trace.end()
+  }
+}
+
+export async function updateExpense(id: string, formData: Partial<ExpenseFormData>): Promise<Expense | null> {
+  const trace = createActionTrace('service.expense.update', {
+    hasReceipt: Boolean(formData.receipt_file),
+    removesReceipt: Boolean(formData.remove_receipt),
+    obligationType: formData.obligation_type,
+  })
+  const supabase = createClient()
+  try {
+    const existing = await trace.step('supabase.select.existing_expense_details', () => getExpenseById(id))
+    const currentObligation = getLegacyOweMeObligation(existing)
+    const nextType = formData.obligation_type
+      ?? (currentObligation ? 'owe_me' : 'normal')
+
+    if (nextType === 'i_owe') {
+      await trace.step('service.create_i_owe_obligation', () => createIOweParticipantObligations({
+        amount: formData.amount ?? existing.amount,
+        category: formData.category ?? existing.category,
+        note: formData.note ?? existing.note,
+        created_at: formData.created_at ?? existing.created_at,
+        obligation_type: 'i_owe',
+        contact_id: formData.contact_id ?? null,
+        contact_user_id: formData.contact_user_id ?? null,
+        contact_name: formData.contact_name,
+        contact_email: formData.contact_email ?? null,
+        participants: formData.participants,
+      }))
+      await trace.step('service.delete_original_expense', () => deleteExpense(id))
+      return null
+    }
+
+    const baseUpdate = toExpenseUpdate(formData)
+    const data = Object.keys(baseUpdate).length > 0
+      ? await trace.step('supabase.update.expense_with_balance_trigger', () =>
+        supabase
+          .from('expenses')
+          .update(baseUpdate)
+          .eq('id', id)
+          .select()
+          .single()
+          .then(({ data: updated, error }) => {
+            if (error) throw error
+            return updated
+          })
+      )
+      : existing
+
+    if (nextType === 'normal' && (formData.participants !== undefined || formData.obligation_type !== undefined)) {
+      const participants = getValidParticipants(formData)
+      await trace.step('service.replace_expense_participants', () => replaceExpenseParticipants({
+        expenseId: id,
+        userId: data.user_id,
+        participants,
+        // data.amount is authoritative post-write (PHP-converted for foreign accounts);
+        // formData.amount would be the native foreign-currency value, which is wrong here.
+        totalAmount: data.amount ?? formData.amount,
         category: formData.category ?? data.category,
         note: formData.note ?? data.note,
-        sourceExpenseId: id,
         createdAt: formData.created_at ?? data.created_at,
-      })
+      }))
     }
-  }
 
-  const receiptBase = await getExpenseById(data.id)
-  if (formData.receipt_file) {
-    await setExpenseReceipt({
-      expense: receiptBase,
-      file: formData.receipt_file,
-    })
-  } else if (formData.remove_receipt) {
-    await clearExpenseReceipt(receiptBase)
-  }
+    if (nextType === 'owe_me') {
+      const latest = await trace.step('supabase.select.latest_expense_obligation', () => getExpenseById(data.id))
+      const latestObligation = latest.personal_obligations?.find((o) => o.direction === 'owed_to_user')
 
-  return getExpenseById(data.id)
+      if (!formData.contact_name?.trim() && !latestObligation?.contact_name) {
+        throw new Error('Contact is required')
+      }
+
+      if (latestObligation) {
+        const { error: obligationErr } = await trace.step('supabase.update.personal_obligation', () =>
+          supabase
+            .from('personal_obligations')
+            .update({
+              contact_user_id: formData.contact_user_id ?? latestObligation.contact_user_id,
+              contact_id: formData.contact_id ?? latestObligation.contact_id ?? null,
+              contact_name: formData.contact_name?.trim() || latestObligation.contact_name,
+              contact_email: formData.contact_email ?? latestObligation.contact_email,
+            })
+            .eq('id', latestObligation.id)
+        )
+        if (obligationErr) throw obligationErr
+      } else {
+        await trace.step('service.create_obligation', () => createObligationForContact({
+          direction: 'owed_to_user',
+          contactId: formData.contact_id ?? null,
+          contactUserId: formData.contact_user_id ?? null,
+          contactName: formData.contact_name ?? '',
+          contactEmail: formData.contact_email ?? null,
+          amount: formData.amount ?? data.amount,
+          category: formData.category ?? data.category,
+          note: formData.note ?? data.note,
+          sourceExpenseId: id,
+          createdAt: formData.created_at ?? data.created_at,
+        }))
+      }
+    }
+
+    if (formData.receipt_file || formData.remove_receipt) {
+      const receiptBase = await trace.step('supabase.select.receipt_base_expense', () => getExpenseById(data.id))
+      if (formData.receipt_file) {
+        await trace.step('service.set_receipt', () => setExpenseReceipt({
+          expense: receiptBase,
+          file: formData.receipt_file!,
+        }))
+      } else if (formData.remove_receipt) {
+        await trace.step('service.clear_receipt', () => clearExpenseReceipt(receiptBase))
+      }
+    }
+
+    return trace.step('supabase.select.updated_expense_details', () => getExpenseById(data.id))
+  } finally {
+    trace.end()
+  }
 }
 
 export async function deleteExpense(id: string): Promise<void> {
+  const trace = createActionTrace('service.expense.delete')
   const supabase = createClient()
-  const existing = await getExpenseById(id)
-  if (existing.receipt_path || existing.has_receipt) {
-    await clearExpenseReceipt(existing)
-  }
+  try {
+    const existing = await trace.step('supabase.select.existing_expense_details', () => getExpenseById(id))
+    if (existing.receipt_path || existing.has_receipt) {
+      await trace.step('service.clear_receipt', () => clearExpenseReceipt(existing))
+    }
 
-  const { error } = await supabase.rpc('delete_expense_safely', {
-    p_expense_id: id,
-  })
-  if (error) throw new Error(error.message)
+    const { error } = await trace.step('supabase.rpc.delete_expense_safely_with_balance_updates', () =>
+      supabase.rpc('delete_expense_safely', {
+        p_expense_id: id,
+      })
+    )
+    if (error) throw new Error(error.message)
+  } finally {
+    trace.end()
+  }
 }

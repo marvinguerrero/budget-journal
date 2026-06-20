@@ -23,6 +23,7 @@ import { PRESET_COLORS, PRESET_EMOJIS_INCOME, isLiabilityType } from '@/lib/cons
 import { AccountSelector } from '@/components/accounts/AccountSelector'
 import { formatCurrency, getMonthName } from '@/utils/format'
 import { cn } from '@/lib/utils'
+import { createActionTrace, perfNow } from '@/lib/performance'
 import { Plus, SlidersHorizontal } from 'lucide-react'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
@@ -302,18 +303,25 @@ export default function IncomePage() {
   // ── Handlers ──────────────────────────────────────────────────
   const handleAddEntry = async (e: React.FormEvent) => {
     e.preventDefault()
+    const trace = createActionTrace('ui.income_form.submit_add')
+    const validationStart = perfNow()
     const amt = parseFloat(entryAmount)
-    if (!entrySourceId || !amt || amt < 0.01) return
+    if (!entrySourceId || !amt || amt < 0.01) {
+      trace.measure('validation', validationStart, { valid: false })
+      trace.end()
+      return
+    }
+    trace.measure('validation', validationStart, { valid: true })
     setIsSaving(true)
     try {
-      await addEntry({
+      await trace.step('hook.add_income_entry', () => addEntry({
         income_source_id: entrySourceId,
         account_id: entryAccountId || null,
         amount: amt,
         note: entryNote.trim(),
         status: entryStatus,
         received_at: new Date(entryDate + 'T12:00:00').toISOString(),
-      })
+      }))
       setShowAdd(false)
       setEntryAmount('')
       setEntryNote('')
@@ -322,6 +330,7 @@ export default function IncomePage() {
       setEntryDate(now.toISOString().slice(0, 10))
     } finally {
       setIsSaving(false)
+      trace.end()
     }
   }
 

@@ -1,5 +1,11 @@
 import { createClient } from '@/lib/supabase/client'
 import { AccountTransfer, AccountTransferFormData } from '@/types'
+import { createActionTrace } from '@/lib/performance'
+
+type RpcResult<T> = {
+  data: T
+  error: { message: string } | null
+}
 
 export async function getAccountTransfers(month?: number, year?: number): Promise<AccountTransfer[]> {
   const supabase = createClient()
@@ -24,29 +30,43 @@ export async function getAccountTransfers(month?: number, year?: number): Promis
 }
 
 export async function createAccountTransfer(form: AccountTransferFormData): Promise<AccountTransfer> {
+  const trace = createActionTrace('service.transfer.create', { hasFee: Number(form.transfer_fee ?? 0) > 0 })
   const supabase = createClient()
   const transferFee = Number(form.transfer_fee ?? 0)
 
-  if (transferFee < 0) {
-    throw new Error('Transfer fee cannot be negative.')
+  try {
+    if (transferFee < 0) {
+      throw new Error('Transfer fee cannot be negative.')
+    }
+
+    const { data, error } = await trace.step<RpcResult<AccountTransfer>>('supabase.rpc.create_transfer_with_balance_updates', async () =>
+      await supabase.rpc('create_account_transfer_with_fee', {
+        p_from_account_id: form.from_account_id,
+        p_to_account_id: form.to_account_id,
+        p_amount: form.amount,
+        p_note: form.note,
+        p_transferred_at: form.transferred_at,
+        p_transfer_fee: transferFee,
+        p_destination_amount: form.destination_amount ?? null,
+      }) as unknown as RpcResult<AccountTransfer>
+    )
+
+    if (error) throw new Error(error.message)
+    return data
+  } finally {
+    trace.end()
   }
-
-  const { data, error } = await supabase.rpc('create_account_transfer_with_fee', {
-    p_from_account_id: form.from_account_id,
-    p_to_account_id: form.to_account_id,
-    p_amount: form.amount,
-    p_note: form.note,
-    p_transferred_at: form.transferred_at,
-    p_transfer_fee: transferFee,
-    p_destination_amount: form.destination_amount ?? null,
-  })
-
-  if (error) throw new Error(error.message)
-  return data
 }
 
 export async function deleteAccountTransfer(id: string): Promise<void> {
+  const trace = createActionTrace('service.transfer.delete')
   const supabase = createClient()
-  const { error } = await supabase.from('account_transfers').delete().eq('id', id)
-  if (error) throw error
+  try {
+    const { error } = await trace.step('supabase.delete.account_transfer', () =>
+      supabase.from('account_transfers').delete().eq('id', id)
+    )
+    if (error) throw error
+  } finally {
+    trace.end()
+  }
 }

@@ -7,6 +7,7 @@ import { getBudgets, createBudget, updateBudget, deleteBudget } from '@/services
 import { Expense, ExpenseFormData, BudgetFormData } from '@/types'
 import { getCurrentMonth } from '@/utils/format'
 import { toast } from 'sonner'
+import { createActionTrace } from '@/lib/performance'
 
 const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
 
@@ -77,12 +78,13 @@ export function useExpenses(month?: number, year?: number) {
   const requestSeq = useRef(0)
 
   const fetchExpenses = useCallback(async () => {
+    const trace = createActionTrace('expenses.refetch', { month, year })
     const requestId = requestSeq.current + 1
     requestSeq.current = requestId
     setLoading(true)
     setError(null)
     try {
-      const data = await getExpenses(month, year)
+      const data = await trace.step('supabase.select.expenses', () => getExpenses(month, year))
       const nextExpenses = sanitizeHookExpenses(`fetch:${requestId}`, data)
       if (requestId === requestSeq.current) {
         setExpenses(nextExpenses)
@@ -93,6 +95,7 @@ export function useExpenses(month?: number, year?: number) {
       if (requestId === requestSeq.current) {
         setLoading(false)
       }
+      trace.end()
     }
   }, [month, year, setExpenses, setLoading])
 
@@ -104,44 +107,63 @@ export function useExpenses(month?: number, year?: number) {
   }, [fetchExpenses])
 
   const handleAddExpense = async (formData: ExpenseFormData) => {
+    const trace = createActionTrace('expense.add', {
+      hasReceipt: Boolean(formData.receipt_file),
+      obligationType: formData.obligation_type ?? 'normal',
+    })
     try {
-      const newExpense = await createExpense(formData)
-      if (newExpense) addExpense(newExpense)
+      const newExpense = await trace.step('service.create_expense', () => createExpense(formData))
+      await trace.step('local_state.insert', async () => {
+        if (newExpense) addExpense(newExpense)
+      })
       toast.success(formData.obligation_type === 'i_owe' ? 'Payable added!' : 'Expense added!')
       return newExpense
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to add expense'
       toast.error(message)
       throw new Error(message)
+    } finally {
+      trace.end()
     }
   }
 
   const handleUpdateExpense = async (id: string, formData: Partial<ExpenseFormData>) => {
+    const trace = createActionTrace('expense.edit', {
+      hasReceipt: Boolean(formData.receipt_file),
+      removesReceipt: Boolean(formData.remove_receipt),
+    })
     try {
-      const updated = await updateExpense(id, formData)
-      if (updated) {
-        updateStore(id, updated)
-        toast.success('Expense updated!')
-      } else {
-        removeExpense(id)
-        toast.success('Payable added!')
-      }
+      const updated = await trace.step('service.update_expense', () => updateExpense(id, formData))
+      await trace.step('local_state.update', async () => {
+        if (updated) {
+          updateStore(id, updated)
+          toast.success('Expense updated!')
+        } else {
+          removeExpense(id)
+          toast.success('Payable added!')
+        }
+      })
       return updated
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update expense'
       toast.error(message)
       throw new Error(message)
+    } finally {
+      trace.end()
     }
   }
 
   const handleDeleteExpense = async (id: string) => {
+    const trace = createActionTrace('expense.delete')
     try {
-      await deleteExpense(id)
-      removeExpense(id)
+      await trace.step('service.delete_expense', () => deleteExpense(id))
+      await trace.step('local_state.remove', async () => removeExpense(id))
       toast.success('Expense deleted')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to delete expense'
       toast.error(message)
+    } finally {
+      trace.end()
     }
   }
 

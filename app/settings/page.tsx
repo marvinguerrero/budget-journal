@@ -23,6 +23,7 @@ import {
   Sun, Moon, Monitor, LogOut, User, Palette, Layers, Trash2, Pencil, Wallet, AlertTriangle, Bug, Info, ChevronRight, GraduationCap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { createActionTrace, perfNow } from '@/lib/performance'
 import { useAuth } from '@/hooks/useAuth'
 import {
   ACCOUNT_TYPES, PRESET_COLORS, PRESET_EMOJIS_CATEGORIES,
@@ -238,6 +239,8 @@ export default function SettingsPage() {
 
   const handleCreateAcc = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    const trace = createActionTrace('ui.account_form.submit_add')
+    const validationStart = perfNow()
     setIsSavingAcc(true)
     const category = accountTypeCategory(accType)
     const isCreditCard = isCreditCardType(accType)
@@ -247,8 +250,14 @@ export default function SettingsPage() {
     // also enforces this server-side; we mirror it here for a clean UI.
     const rawBalance = isForeign ? 0 : parseFloat(accBalance) || 0
     const balance = category === 'liability' ? -(Math.abs(rawBalance)) : rawBalance
+    trace.measure('validation', validationStart, { valid: canSaveCreateAccount, isForeign, isCreditCard })
+    if (!canSaveCreateAccount) {
+      setIsSavingAcc(false)
+      trace.end()
+      return
+    }
     try {
-      await addAccount({
+      await trace.step('hook.add_account', () => addAccount({
         name: accName.trim(),
         emoji: accEmoji,
         color: accColor,
@@ -260,12 +269,13 @@ export default function SettingsPage() {
         soa_day: isCreditCard ? Number(accSoaDay) : null,
         due_day: isCreditCard ? Number(accDueDay) : null,
         last_statement_date: isCreditCard && accLastStatementDate ? accLastStatementDate : null,
-      })
+      }))
       setShowCreateAcc(false)
       setAccName(''); setAccEmoji('🏦'); setAccType('bank'); setAccBalance('0'); setAccColor('#3B82F6')
       setAccCreditLimit(''); setAccSoaDay(''); setAccDueDay(''); setAccLastStatementDate(''); setAccCurrency('PHP')
     } finally {
       setIsSavingAcc(false)
+      trace.end()
     }
   }
 

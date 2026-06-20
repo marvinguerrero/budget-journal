@@ -14,6 +14,7 @@ import { getCurrencySymbol, isForeignCurrency } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
+import { createActionTrace, perfNow } from '@/lib/performance'
 import Link from 'next/link'
 import { Plus, Trash2 } from 'lucide-react'
 
@@ -262,11 +263,21 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!canSubmit) return
+    const trace = createActionTrace(isEditing ? 'ui.expense_form.submit_edit' : 'ui.expense_form.submit_add', {
+      hasReceipt: Boolean(receiptFile),
+      obligationType,
+    })
+    const validationStart = perfNow()
+    if (!canSubmit) {
+      trace.measure('validation', validationStart, { valid: false })
+      trace.end()
+      return
+    }
+    trace.measure('validation', validationStart, { valid: true })
 
     setIsSubmitting(true)
     try {
-      await onSubmit({
+      await trace.step('submit_handler', () => onSubmit({
         amount: parseFloat(amount),
         category,
         note: note.trim() || category,
@@ -299,12 +310,13 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             }
           })
           : undefined,
-      })
+      }))
     } catch {
       // Submit handlers show the specific toast; keep the form open without
       // bubbling validation failures into the Next.js runtime overlay.
     } finally {
       setIsSubmitting(false)
+      trace.end()
     }
   }
 
