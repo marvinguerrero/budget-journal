@@ -7,8 +7,29 @@ import {
   WishlistShareMode,
   WishlistStatus,
 } from '@/types'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
 
-const WISHLIST_SELECT = '*, budgets(*)'
+const WISHLIST_SELECT = `
+  id,
+  user_id,
+  name,
+  target_amount,
+  category,
+  priority,
+  notes,
+  product_url,
+  quantity,
+  status,
+  linked_budget_id,
+  created_at,
+  updated_at,
+  budgets(id, user_id, category, item, amount, month, year, created_at)
+`
+
+function firstRelation<T>(relation: T | T[] | null | undefined): T | null {
+  if (!relation) return null
+  return Array.isArray(relation) ? relation[0] ?? null : relation
+}
 
 function normalizeUrl(url?: string | null) {
   const value = url?.trim()
@@ -27,9 +48,13 @@ export async function getWishlistItems(): Promise<WishlistItem[]> {
     .from('wishlist_items')
     .select(WISHLIST_SELECT)
     .order('created_at', { ascending: false })
+    .limit(QUERY_LIMITS.wishlist)
 
   if (error) throw error
-  return data || []
+  return (data || []).map((item) => ({
+    ...item,
+    budgets: firstRelation(item.budgets),
+  }))
 }
 
 export async function createWishlistItem(form: WishlistFormData): Promise<WishlistItem> {
@@ -53,7 +78,10 @@ export async function createWishlistItem(form: WishlistFormData): Promise<Wishli
     .single()
 
   if (error) throw error
-  return data
+  return {
+    ...data,
+    budgets: firstRelation(data.budgets),
+  }
 }
 
 export async function updateWishlistItem(
@@ -79,7 +107,10 @@ export async function updateWishlistItem(
     .single()
 
   if (error) throw error
-  return data
+  return {
+    ...data,
+    budgets: firstRelation(data.budgets),
+  }
 }
 
 export async function updateWishlistStatus(
@@ -95,7 +126,10 @@ export async function updateWishlistStatus(
     .single()
 
   if (error) throw error
-  return data
+  return {
+    ...data,
+    budgets: firstRelation(data.budgets),
+  }
 }
 
 export async function convertWishlistToBudget(
@@ -119,19 +153,26 @@ export async function convertWishlistToBudget(
     .single()
 
   if (itemError) throw itemError
-  return item
+  return {
+    ...item,
+    budgets: firstRelation(item.budgets),
+  }
 }
 
 export async function getWishlistShares(): Promise<WishlistShare[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from('wishlist_shares')
-    .select('*, contacts(*), wishlist_share_items(wishlist_item_id)')
+    .select('id, owner_user_id, recipient_user_id, contact_id, mode, share_notes, share_product_links, share_prices, is_active, created_at, updated_at, contacts(id, user_id, name, email, phone, notes, contact_type, link_status, linked_user_id, created_at, updated_at), wishlist_share_items(wishlist_item_id)')
     .eq('is_active', true)
     .order('created_at', { ascending: false })
+    .limit(QUERY_LIMITS.wishlist)
 
   if (error) throw error
-  return data || []
+  return (data || []).map((share) => ({
+    ...share,
+    contacts: firstRelation(share.contacts),
+  }))
 }
 
 export async function shareWishlist(payload: {

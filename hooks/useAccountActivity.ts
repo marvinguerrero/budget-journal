@@ -4,6 +4,26 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { FinancialAccount } from '@/types'
 import { toast } from 'sonner'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
+
+const ACTIVITY_ACCOUNT_SELECT = `
+  id,
+  user_id,
+  name,
+  emoji,
+  color,
+  type,
+  category,
+  balance,
+  currency_code,
+  base_currency_code,
+  created_at
+`
+
+function firstRelation<T>(relation: T | T[] | null | undefined): T | null {
+  if (!relation) return null
+  return Array.isArray(relation) ? relation[0] ?? null : relation
+}
 
 export type ActivityEntry =
   | {
@@ -69,7 +89,7 @@ export function useAccountActivity(month?: number, year?: number) {
     try {
       const supabase = createClient()
 
-      const { data: accountRows } = await supabase.from('financial_accounts').select('*')
+      const { data: accountRows } = await supabase.from('financial_accounts').select(ACTIVITY_ACCOUNT_SELECT)
       const accMap = new Map<string, FinancialAccount>(
         (accountRows ?? []).map((a: FinancialAccount) => [a.id, a])
       )
@@ -96,34 +116,44 @@ export function useAccountActivity(month?: number, year?: number) {
         { data: sharedSettlements, error: ssErr },
       ] = await Promise.all([
         withDates(
-          supabase.from('expenses').select('*').not('account_id', 'is', null),
+          supabase
+            .from('expenses')
+            .select('id, account_id, created_at, amount, category, note')
+            .not('account_id', 'is', null)
+            .order('created_at', { ascending: false }),
           'created_at',
-        ),
+        ).limit(QUERY_LIMITS.accountActivity),
         withDates(
           supabase
             .from('income_entries')
-            .select('*, income_sources(name, emoji)')
+            .select('id, account_id, income_source_id, amount, note, received_at, income_sources(name, emoji)')
             .not('account_id', 'is', null)
             .eq('status', 'received'),
           'received_at',
-        ),
+        ).limit(QUERY_LIMITS.accountActivity),
         withDates(
-          supabase.from('account_transfers').select('*'),
+          supabase
+            .from('account_transfers')
+            .select('id, from_account_id, to_account_id, amount, transfer_fee, note, transferred_at')
+            .order('transferred_at', { ascending: false }),
           'transferred_at',
-        ),
+        ).limit(QUERY_LIMITS.accountActivity),
         withDates(
           supabase
             .from('personal_obligation_settlements')
-            .select('*, personal_obligations(contact_name)')
+            .select('id, amount, note, status, created_at, confirmed_at, payer_account_id, receiver_account_id, personal_obligations(contact_name)')
             .in('status', ['pending_confirmation', 'confirmed'])
-            .or('payer_account_id.not.is.null,receiver_account_id.not.is.null'),
+            .or('payer_account_id.not.is.null,receiver_account_id.not.is.null')
+            .order('created_at', { ascending: false }),
           'created_at',
-        ),
+        ).limit(QUERY_LIMITS.accountActivity),
         supabase
           .from('shared_expense_settlements')
-          .select('*')
+          .select('id, amount, note, status, created_at, confirmed_at, confirmation_reversed_at, payer_account_id, receiver_account_id, payer_account_label, receiver_account_label, payer_email, receiver_email')
           .or('payer_account_id.not.is.null,receiver_account_id.not.is.null')
-          .or('confirmed_at.not.is.null,confirmation_reversed_at.not.is.null'),
+          .or('confirmed_at.not.is.null,confirmation_reversed_at.not.is.null')
+          .order('created_at', { ascending: false })
+          .limit(QUERY_LIMITS.accountActivity),
       ])
 
       if (expErr) throw expErr
@@ -143,7 +173,7 @@ export function useAccountActivity(month?: number, year?: number) {
       for (const i of incomes ?? []) {
         const account = accMap.get(i.account_id)
         if (!account) continue
-        const src = i.income_sources as { name: string; emoji: string } | null
+        const src = firstRelation(i.income_sources)
         result.push({
           kind: 'income',
           id: i.id,
@@ -176,7 +206,7 @@ export function useAccountActivity(month?: number, year?: number) {
         const accountId = s.payer_account_id ?? s.receiver_account_id
         const account = accountId ? accMap.get(accountId) : null
         if (!account) continue
-        const obligation = s.personal_obligations as { contact_name: string } | null
+        const obligation = firstRelation(s.personal_obligations)
         result.push({
           kind: 'personal_settlement',
           id: s.id,
@@ -263,7 +293,15 @@ export function useAccountActivity(month?: number, year?: number) {
     }
   }, [month, year])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void load()
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [load])
 
   return { entries, isLoading, reload: load }
 }

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client'
 import { IncomeEntry, IncomeEntryFormData } from '@/types'
 import { createActionTrace } from '@/lib/performance'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
 
 const INCOME_ENTRY_SELECT = `
   id,
@@ -20,6 +21,7 @@ export async function getIncomeEntries(month?: number, year?: number): Promise<I
     .from('income_entries')
     .select(INCOME_ENTRY_SELECT)
     .order('received_at', { ascending: false })
+    .limit(QUERY_LIMITS.income)
 
   if (month && year) {
     const start = new Date(year, month - 1, 1).toISOString()

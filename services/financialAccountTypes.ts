@@ -1,17 +1,22 @@
 import { createClient } from '@/lib/supabase/client'
 import { AccountCategory, FinancialAccountType } from '@/types'
 
+const ACCOUNT_TYPE_SELECT = 'id, user_id, name, category, is_default, created_at, updated_at'
+let accountTypeCache: FinancialAccountType[] | null = null
+
 export async function getFinancialAccountTypes(): Promise<FinancialAccountType[]> {
+  if (accountTypeCache) return accountTypeCache
   const supabase = createClient()
   const { data, error } = await supabase
     .from('financial_account_types')
-    .select('*')
+    .select(ACCOUNT_TYPE_SELECT)
     .order('is_default', { ascending: false })
     .order('category', { ascending: true })
     .order('name', { ascending: true })
 
   if (error) throw error
-  return data ?? []
+  accountTypeCache = data ?? []
+  return accountTypeCache
 }
 
 export async function createFinancialAccountType(form: {
@@ -30,10 +35,11 @@ export async function createFinancialAccountType(form: {
       category: form.category,
       is_default: false,
     })
-    .select()
+    .select(ACCOUNT_TYPE_SELECT)
     .single()
 
   if (error) throw error
+  accountTypeCache = accountTypeCache ? [...accountTypeCache, data] : null
   return data
 }
 
@@ -49,10 +55,11 @@ export async function updateFinancialAccountType(
       category: form.category,
     })
     .eq('id', id)
-    .select()
+    .select(ACCOUNT_TYPE_SELECT)
     .single()
 
   if (error) throw error
+  accountTypeCache = accountTypeCache ? accountTypeCache.map((type) => type.id === id ? data : type) : null
   return data
 }
 
@@ -62,4 +69,5 @@ export async function deleteFinancialAccountType(id: string): Promise<void> {
     p_type_id: id,
   })
   if (error) throw new Error(error.message)
+  accountTypeCache = accountTypeCache ? accountTypeCache.filter((type) => type.id !== id) : null
 }

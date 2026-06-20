@@ -1,15 +1,37 @@
 import { createClient } from '@/lib/supabase/client'
 import { AppNotification } from '@/types'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
+
+const NOTIFICATION_SELECT = `
+  id,
+  user_id,
+  type,
+  title,
+  message,
+  is_read,
+  related_id,
+  created_at
+`
 
 export async function getNotifications(): Promise<AppNotification[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from('notifications')
-    .select('*')
+    .select(NOTIFICATION_SELECT)
     .order('created_at', { ascending: false })
-    .limit(30)
+    .limit(QUERY_LIMITS.notifications)
   if (error) throw error
   return data || []
+}
+
+export async function getUnreadNotificationCount(): Promise<number> {
+  const supabase = createClient()
+  const { count, error } = await supabase
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_read', false)
+  if (error) throw error
+  return count ?? 0
 }
 
 export async function markNotificationRead(id: string): Promise<void> {

@@ -4,6 +4,26 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { FinancialAccount } from '@/types'
 import { toast } from 'sonner'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
+
+const DETAIL_ACCOUNT_SELECT = `
+  id,
+  user_id,
+  name,
+  emoji,
+  color,
+  type,
+  category,
+  balance,
+  currency_code,
+  base_currency_code,
+  created_at
+`
+
+function firstRelation<T>(relation: T | T[] | null | undefined): T | null {
+  if (!relation) return null
+  return Array.isArray(relation) ? relation[0] ?? null : relation
+}
 
 export type AccountDetailEntry =
   | {
@@ -76,31 +96,54 @@ export function useAccountDetail(accountId: string) {
         { data: personalPaid,   error: pspErr },
         { data: personalRecv,   error: psrErr },
       ] = await Promise.all([
-        supabase.from('financial_accounts').select('*').eq('id', accountId).single(),
-        supabase.from('financial_accounts').select('*'),
-        supabase.from('expenses').select('*').eq('account_id', accountId),
+        supabase.from('financial_accounts').select(DETAIL_ACCOUNT_SELECT).eq('id', accountId).single(),
+        supabase.from('financial_accounts').select(DETAIL_ACCOUNT_SELECT),
+        supabase
+          .from('expenses')
+          .select('id, created_at, amount, category, note')
+          .eq('account_id', accountId)
+          .order('created_at', { ascending: false })
+          .limit(QUERY_LIMITS.accountActivity),
         supabase
           .from('shared_expenses')
-          .select('*, shared_groups(name, emoji)')
+          .select('id, created_at, amount, category, note, shared_groups(name, emoji)')
           .eq('account_id', accountId)
-          .is('expense_id', null),
+          .is('expense_id', null)
+          .order('created_at', { ascending: false })
+          .limit(QUERY_LIMITS.accountActivity),
         supabase
           .from('income_entries')
-          .select('*, income_sources(name, emoji)')
+          .select('id, received_at, amount, note, income_sources(name, emoji)')
           .eq('account_id', accountId)
-          .eq('status', 'received'),
-        supabase.from('account_transfers').select('*').eq('from_account_id', accountId),
-        supabase.from('account_transfers').select('*').eq('to_account_id', accountId),
+          .eq('status', 'received')
+          .order('received_at', { ascending: false })
+          .limit(QUERY_LIMITS.accountActivity),
+        supabase
+          .from('account_transfers')
+          .select('id, from_account_id, to_account_id, amount, transfer_fee, note, transferred_at')
+          .eq('from_account_id', accountId)
+          .order('transferred_at', { ascending: false })
+          .limit(QUERY_LIMITS.accountActivity),
+        supabase
+          .from('account_transfers')
+          .select('id, from_account_id, to_account_id, amount, transfer_fee, note, transferred_at')
+          .eq('to_account_id', accountId)
+          .order('transferred_at', { ascending: false })
+          .limit(QUERY_LIMITS.accountActivity),
         supabase
           .from('personal_obligation_settlements')
-          .select('*, personal_obligations(contact_name)')
+          .select('id, amount, note, status, created_at, payer_account_id, receiver_account_id, personal_obligations(contact_name)')
           .eq('payer_account_id', accountId)
-          .in('status', ['pending_confirmation', 'confirmed']),
+          .in('status', ['pending_confirmation', 'confirmed'])
+          .order('created_at', { ascending: false })
+          .limit(QUERY_LIMITS.accountActivity),
         supabase
           .from('personal_obligation_settlements')
-          .select('*, personal_obligations(contact_name)')
+          .select('id, amount, note, status, created_at, payer_account_id, receiver_account_id, personal_obligations(contact_name)')
           .eq('receiver_account_id', accountId)
-          .eq('status', 'confirmed'),
+          .eq('status', 'confirmed')
+          .order('created_at', { ascending: false })
+          .limit(QUERY_LIMITS.accountActivity),
       ])
 
       if (accErr) throw accErr
@@ -125,7 +168,7 @@ export function useAccountDetail(accountId: string) {
       }
 
       for (const se of sharedExpenses ?? []) {
-        const grp = se.shared_groups as { name: string; emoji: string } | null
+        const grp = firstRelation(se.shared_groups)
         result.push({
           kind: 'shared_expense',
           id: se.id,
@@ -139,7 +182,7 @@ export function useAccountDetail(accountId: string) {
       }
 
       for (const i of incomes ?? []) {
-        const src = i.income_sources as { name: string; emoji: string } | null
+        const src = firstRelation(i.income_sources)
         result.push({
           kind: 'income',
           id: i.id,
@@ -182,7 +225,7 @@ export function useAccountDetail(accountId: string) {
       }
 
       for (const s of personalPaid ?? []) {
-        const obligation = s.personal_obligations as { contact_name: string } | null
+        const obligation = firstRelation(s.personal_obligations)
         result.push({
           kind: 'personal_settlement',
           id: s.id,
@@ -196,7 +239,7 @@ export function useAccountDetail(accountId: string) {
       }
 
       for (const s of personalRecv ?? []) {
-        const obligation = s.personal_obligations as { contact_name: string } | null
+        const obligation = firstRelation(s.personal_obligations)
         result.push({
           kind: 'personal_settlement',
           id: s.id,
@@ -218,7 +261,15 @@ export function useAccountDetail(accountId: string) {
     }
   }, [accountId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void load()
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [load])
 
   const moneyIn = useMemo(() =>
     entries.reduce((s, e) =>

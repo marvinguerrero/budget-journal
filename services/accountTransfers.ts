@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/client'
 import { AccountTransfer, AccountTransferFormData } from '@/types'
 import { createActionTrace } from '@/lib/performance'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
 
 const ACCOUNT_TRANSFER_SELECT = `
   id,
@@ -30,6 +31,7 @@ export async function getAccountTransfers(month?: number, year?: number): Promis
     .from('account_transfers')
     .select(ACCOUNT_TRANSFER_SELECT)
     .order('transferred_at', { ascending: false })
+    .limit(QUERY_LIMITS.accountActivity)
 
   if (month && year) {
     const start = new Date(year, month - 1, 1).toISOString()

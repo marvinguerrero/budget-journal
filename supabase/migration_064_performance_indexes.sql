@@ -21,6 +21,15 @@ CREATE INDEX IF NOT EXISTS idx_expenses_account_created
   ON public.expenses(account_id, created_at DESC)
   WHERE account_id IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS idx_expenses_user_receipt_created
+  ON public.expenses(user_id, has_receipt, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_user_currency_created
+  ON public.expenses(user_id, original_currency, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_user_shared_status_created
+  ON public.expenses(user_id, is_shared_budget_expense, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_income_entries_account_status_received
   ON public.income_entries(account_id, status, received_at DESC)
   WHERE account_id IS NOT NULL;
@@ -39,6 +48,24 @@ CREATE INDEX IF NOT EXISTS idx_shared_expense_settlements_receiver_created
 
 CREATE INDEX IF NOT EXISTS idx_financial_accounts_user_created
   ON public.financial_accounts(user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread_created
+  ON public.notifications(user_id, is_read, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_shared_expenses_group_created
+  ON public.shared_expenses(group_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_shared_expenses_group_budget_created
+  ON public.shared_expenses(group_id, shared_budget_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_shared_expense_splits_expense_debtor
+  ON public.shared_expense_splits(expense_id, debtor_user_id);
+
+CREATE INDEX IF NOT EXISTS idx_wishlist_items_user_status_created
+  ON public.wishlist_items(user_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wishlist_shares_recipient_active_created
+  ON public.wishlist_shares(recipient_user_id, is_active, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_personal_obligation_settlements_payer_created
   ON public.personal_obligation_settlements(payer_account_id, created_at DESC)

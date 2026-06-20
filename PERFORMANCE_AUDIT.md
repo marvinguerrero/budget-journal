@@ -91,12 +91,83 @@ Current average time is now measurable from browser console logs, but not yet sa
 - account transfers by `user_id, transferred_at`
 - account transfers by source/destination account and transferred date
 - expenses by account and created date
+- expenses by receipt status, currency, shared-budget flag, and created date
 - received income by account/status/date
 - expense participants by `expense_id, line_item_id, created_at`
 - line items by `expense_id, created_at`
 - shared settlements by payer/receiver and created date
+- shared expenses by group/budget/date
+- shared expense splits by expense/debtor
+- notifications by user/unread/date
+- wishlist items and active wishlist shares
 - personal obligation settlements by payer/receiver account and created date
 - financial accounts by user and created date
+
+## Holistic Review
+
+### Query Optimization Changes Applied
+
+- Expenses now default to a 50-row list payload and use explicit selectors for list, mutation return, and detail fetches.
+- Income entries now default to 50 rows and use explicit selectors.
+- Account transfers now default to 50 rows and use explicit selectors.
+- Account activity and account detail now cap each source list to 50 rows and avoid `select('*')` for major transaction tables.
+- Shared group details and balances now cap shared expense and settlement history to 50 rows and fetch splits only for the loaded expense page.
+- Notifications no longer fetch the full dropdown list on app shell mount. The bell fetches a cheap unread count first and lazy-loads the 20 latest notifications when opened.
+- Wishlist item/share lists are capped and use narrower relation selectors.
+- Dashboard server queries now fetch explicit monthly fields and cap expense/income payloads.
+- Categories, income sources, and financial account types now use simple session-local service caches.
+
+### Pages/Actions Requiring Pagination Next
+
+- Expenses: add "Load more" or cursor pagination beyond the current 50-row default.
+- Income: add "Load more" for older income records.
+- Account Activity: merge per-source 50-row slices into a cursor-paginated unified feed.
+- Shared Group Detail: paginate shared expenses and settlement history.
+- Balances: paginate historical settlements, loans, and credit-card cycle expenses.
+- Wishlist: paginate item/share lists.
+- Notifications: add "Load more" after the first 20 notifications.
+- Export: fetch export data via an explicit export-only path, not the visible page list.
+
+### Features Requiring Lazy Loading
+
+- Expense line items: line-item rows are already detail-only; contacts are now loaded only when the itemization form opens.
+- Receipt previews: signed URLs are still created only when preview/download is requested.
+- Shared group splits: should stay scoped to the loaded expense page, not every historical expense.
+- Credit card history: cycle detail should load only when a card/cycle is opened.
+- Contact details: obligation history should paginate/lazy-load for large contact histories.
+- Export line items: should fetch only when export starts.
+
+### Refetches Still To Remove
+
+- Expense create/update still performs final detail reads. Best fix: mutation RPC returns the exact UI row plus affected account metadata.
+- Balances background refetch still reloads broad balance data after settlement/card actions. Best fix: settlement/card RPC returns affected obligations, settlements, and accounts.
+- Account transfer background refetch still reloads accounts and activity. Best fix: transfer RPC returns created transfer plus source/destination account rows.
+- Shared group mutations still call full `load()` in several flows. Best fix: update local members/budgets/expenses/settlements directly after mutation.
+
+### RPC Candidates
+
+- `create_expense_full`: create expense, update account through existing trigger/RPC, optionally create obligation/participants, optionally return list-row + detail-row.
+- `update_expense_full`: update expense, reconcile obligation/participants/receipt metadata, return affected rows.
+- `record_settlement_full`: create/apply/confirm settlement and return updated obligation, settlement, and affected account rows.
+- `record_credit_card_payment_full`: return payment, transfer, card account, and source account in one RPC response.
+- `create_shared_expense_full`: insert shared expense, splits, optional account source, and notification rows in one transaction.
+- `convert_wishlist_to_budget_full`: return updated wishlist item and new/updated budget row.
+
+### Mobile-Specific Risks
+
+- Client-side filtering over large arrays can still block mobile Safari if the user loads older history. Pagination is the real fix.
+- Large Balances memo chains can still be expensive because they derive many views from the same loaded arrays. Splitting tabs into smaller lazy components is recommended.
+- XLSX export is heavy on mobile. Prefer CSV for mobile or perform export in a web worker/server path.
+- Receipt upload progress is currently immediate loading feedback but not byte-progress. Supabase Storage upload progress support or a custom upload path would improve perceived upload time.
+
+### Prioritized Implementation Plan
+
+1. Add cursor pagination UI for Expenses, Income, Notifications, and Account Activity.
+2. Move expense/income filters that map cleanly to columns into Supabase queries: date, category/source, account, receipt status, currency, status.
+3. Create RPCs for expense save, settlement/card payment, and transfer workflows to return affected rows and eliminate broad background refetches.
+4. Split Balances into tab-level data loaders so credit cards, loans, settlements, and shared balances do not all load together.
+5. Add export-only data paths with explicit user intent and progress feedback.
+6. Add a small performance sampling table or dev-only log collector so `[PERF]` averages can be compared over time.
 
 ## Next Fixes
 

@@ -1,15 +1,20 @@
 import { createClient } from '@/lib/supabase/client'
 import { IncomeSource, IncomeSourceFormData } from '@/types'
 
+const INCOME_SOURCE_SELECT = 'id, user_id, name, emoji, color, is_default, created_at'
+let incomeSourceCache: IncomeSource[] | null = null
+
 export async function getIncomeSources(): Promise<IncomeSource[]> {
+  if (incomeSourceCache) return incomeSourceCache
   const supabase = createClient()
   const { data, error } = await supabase
     .from('income_sources')
-    .select('*')
+    .select(INCOME_SOURCE_SELECT)
     .order('is_default', { ascending: false })
     .order('name')
   if (error) throw error
-  return data || []
+  incomeSourceCache = data || []
+  return incomeSourceCache
 }
 
 export async function createIncomeSource(form: IncomeSourceFormData): Promise<IncomeSource> {
@@ -19,9 +24,10 @@ export async function createIncomeSource(form: IncomeSourceFormData): Promise<In
   const { data, error } = await supabase
     .from('income_sources')
     .insert({ user_id: user.id, ...form, is_default: false })
-    .select()
+    .select(INCOME_SOURCE_SELECT)
     .single()
   if (error) throw error
+  incomeSourceCache = incomeSourceCache ? [...incomeSourceCache, data] : null
   return data
 }
 
@@ -31,9 +37,10 @@ export async function updateIncomeSource(id: string, form: Partial<IncomeSourceF
     .from('income_sources')
     .update(form)
     .eq('id', id)
-    .select()
+    .select(INCOME_SOURCE_SELECT)
     .single()
   if (error) throw error
+  incomeSourceCache = incomeSourceCache ? incomeSourceCache.map((source) => source.id === id ? data : source) : null
   return data
 }
 
@@ -41,4 +48,5 @@ export async function deleteIncomeSource(id: string): Promise<void> {
   const supabase = createClient()
   const { error } = await supabase.from('income_sources').delete().eq('id', id)
   if (error) throw error
+  incomeSourceCache = incomeSourceCache ? incomeSourceCache.filter((source) => source.id !== id) : null
 }

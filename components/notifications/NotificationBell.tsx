@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { AppNotification } from '@/types'
 import {
   getNotifications,
+  getUnreadNotificationCount,
   markNotificationRead,
   markAllNotificationsRead,
 } from '@/services/notifications'
@@ -19,6 +20,7 @@ import {
 import { cn } from '@/lib/utils'
 import { Bell, CheckCheck } from 'lucide-react'
 import { formatRelativeTime } from '@/utils/format'
+import { createActionTrace } from '@/lib/performance'
 
 const TYPE_ICON: Record<string, string> = {
   chat_message:         '💬',
@@ -43,13 +45,33 @@ export function NotificationBell() {
   const router = useRouter()
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [open, setOpen] = useState(false)
+  const [hasLoaded, setHasLoaded] = useState(false)
+  const [unreadCountFallback, setUnreadCountFallback] = useState(0)
 
-  const unreadCount = notifications.filter((n) => !n.is_read).length
+  const unreadCount = hasLoaded
+    ? notifications.filter((n) => !n.is_read).length
+    : unreadCountFallback
 
   useEffect(() => {
     if (!user?.id) return
-    getNotifications().then(setNotifications).catch(() => null)
+    const trace = createActionTrace('notifications.unread_count')
+    trace.step('notification unread count', () => getUnreadNotificationCount())
+      .then(setUnreadCountFallback)
+      .catch(() => null)
+      .finally(() => trace.end())
   }, [user?.id])
+
+  useEffect(() => {
+    if (!open || !user?.id || hasLoaded) return
+    const trace = createActionTrace('notifications.fetch_on_open')
+    trace.step('notification fetch', () => getNotifications())
+      .then((nextNotifications) => {
+        setNotifications(nextNotifications)
+        setHasLoaded(true)
+      })
+      .catch(() => null)
+      .finally(() => trace.end())
+  }, [hasLoaded, open, user?.id])
 
   useEffect(() => {
     if (!user?.id) return
@@ -66,6 +88,7 @@ export function NotificationBell() {
         },
         (payload) => {
           setNotifications((prev) => [payload.new as AppNotification, ...prev])
+          setUnreadCountFallback((count) => count + 1)
         }
       )
       .subscribe()
@@ -78,6 +101,7 @@ export function NotificationBell() {
         prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x))
       )
       markNotificationRead(n.id).catch(() => null)
+      setUnreadCountFallback((count) => Math.max(0, count - 1))
     }
     if (n.related_id) {
       setOpen(false)
@@ -114,6 +138,7 @@ export function NotificationBell() {
 
   const handleMarkAll = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
+    setUnreadCountFallback(0)
     markAllNotificationsRead().catch(() => null)
   }
 
@@ -149,7 +174,7 @@ export function NotificationBell() {
           {notifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 gap-2 text-muted-foreground">
               <Bell className="w-6 h-6 opacity-30" />
-              <p className="text-sm">You're all caught up</p>
+              <p className="text-sm">You&apos;re all caught up</p>
             </div>
           ) : (
             notifications.map((n) => (

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { DashboardClient } from './DashboardClient'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -23,23 +24,25 @@ export default async function DashboardPage() {
   const [{ data: expenses }, { data: budgets }, { data: incomeEntries }] = await Promise.all([
     supabase
       .from('expenses')
-      .select('*')
+      .select('id, user_id, amount, category, note, account_id, is_shared_budget_expense, original_amount, original_currency, converted_amount, created_at')
       .eq('user_id', user.id)
       .gte('created_at', startDate)
       .lte('created_at', endDate)
-      .order('created_at', { ascending: false }),
+      .order('created_at', { ascending: false })
+      .limit(QUERY_LIMITS.expenses),
     supabase
       .from('budgets')
-      .select('*')
+      .select('id, user_id, category, item, amount, month, year, created_at')
       .eq('user_id', user.id)
       .eq('month', month)
       .eq('year', year),
     supabase
       .from('income_entries')
-      .select('*')
+      .select('id, user_id, income_source_id, account_id, amount, note, status, received_at, created_at')
       .eq('user_id', user.id)
       .gte('received_at', incomeStart)
-      .lte('received_at', incomeEnd),
+      .lte('received_at', incomeEnd)
+      .limit(QUERY_LIMITS.income),
   ])
 
   return (

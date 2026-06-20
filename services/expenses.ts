@@ -13,6 +13,7 @@ import {
 import { createPersonalObligation, createRegisteredPersonalObligation } from './personalObligations'
 import { deleteReceiptFile, uploadExpenseReceipt } from './receipts'
 import { createActionTrace } from '@/lib/performance'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
 
 const EXPENSE_SELECT = '*, personal_obligations(*), expense_participants(*)'
 const EXPENSE_LIST_SELECT = `
@@ -455,6 +456,7 @@ export async function getExpenses(month?: number, year?: number): Promise<Expens
     .from('expenses')
     .select(EXPENSE_LIST_SELECT)
     .order('created_at', { ascending: false })
+    .limit(QUERY_LIMITS.expenses)
 
   if (month && year) {
     const startDate = new Date(year, month - 1, 1).toISOString()
@@ -487,6 +489,7 @@ export async function getAllExpenses(): Promise<Expense[]> {
     .from('expenses')
     .select(EXPENSE_LIST_SELECT)
     .order('created_at', { ascending: false })
+    .limit(QUERY_LIMITS.expenses)
   if (error) throw error
   return sanitizeExpenseArray('getAllExpenses', data)
 }
