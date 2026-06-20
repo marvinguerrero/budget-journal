@@ -2,11 +2,23 @@ import { createClient } from '@/lib/supabase/client'
 import { IncomeEntry, IncomeEntryFormData } from '@/types'
 import { createActionTrace } from '@/lib/performance'
 
+const INCOME_ENTRY_SELECT = `
+  id,
+  user_id,
+  income_source_id,
+  account_id,
+  amount,
+  note,
+  status,
+  received_at,
+  created_at
+`
+
 export async function getIncomeEntries(month?: number, year?: number): Promise<IncomeEntry[]> {
   const supabase = createClient()
   let query = supabase
     .from('income_entries')
-    .select('*')
+    .select(INCOME_ENTRY_SELECT)
     .order('received_at', { ascending: false })
 
   if (month && year) {
@@ -30,7 +42,7 @@ export async function createIncomeEntry(form: IncomeEntryFormData): Promise<Inco
       supabase
         .from('income_entries')
         .insert({ user_id: user.id, status: 'expected', ...form })
-        .select()
+        .select(INCOME_ENTRY_SELECT)
         .single()
     )
     if (error) throw error
@@ -52,7 +64,7 @@ export async function updateIncomeEntry(
         .from('income_entries')
         .update(form)
         .eq('id', id)
-        .select()
+        .select(INCOME_ENTRY_SELECT)
         .single()
     )
     if (error) throw error

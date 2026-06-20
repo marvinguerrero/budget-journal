@@ -26,6 +26,7 @@ import {
 import { ExpenseDetailsData, ExpenseFormData } from '@/types'
 import { formatCurrency } from '@/utils/format'
 import { isLiabilityType, getCurrencySymbol } from '@/lib/constants'
+import { createActionTrace, perfNow } from '@/lib/performance'
 import {
   Camera,
   Download,
@@ -360,16 +361,30 @@ function ReceiptDetailsSection({
 
   const handleReceiptFile = async (file?: File) => {
     if (!file) return
+    const trace = createActionTrace('ui.receipt.upload', { sizeBytes: file.size, type: file.type })
+    const validationStart = perfNow()
+    let validationLogged = false
     setIsBusy(true)
     try {
       validateReceiptFile(file)
-      await updateExpense(expenseId, { receipt_file: file })
-      await onChanged()
+      trace.measure('validation', validationStart, { valid: true })
+      validationLogged = true
+      await trace.step('service.update_expense_receipt', () => updateExpense(expenseId, { receipt_file: file }))
+      const refreshTrace = createActionTrace('receipt.background_refetch.after_upload')
+      void refreshTrace.step('refetch.expense_details', () => onChanged())
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : 'Unable to refresh receipt')
+        })
+        .finally(() => refreshTrace.end())
       toast.success(hasReceipt ? 'Receipt replaced' : 'Receipt uploaded')
     } catch (error) {
+      if (!validationLogged) {
+        trace.measure('validation', validationStart, { valid: false })
+      }
       toast.error(error instanceof Error ? error.message : 'Unable to save receipt')
     } finally {
       setIsBusy(false)
+      trace.end()
       if (fileInputRef.current) fileInputRef.current.value = ''
       if (cameraInputRef.current) cameraInputRef.current.value = ''
     }

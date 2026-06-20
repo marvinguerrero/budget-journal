@@ -19,6 +19,7 @@ import { exportExpensesToExcel } from '@/utils/exportExcel'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
+import { createActionTrace } from '@/lib/performance'
 import { getExpenseIntegrityIssues } from '@/lib/expenseIntegrity'
 import { Expense } from '@/types'
 import { Search, X, Download, SlidersHorizontal } from 'lucide-react'
@@ -652,11 +653,21 @@ export default function ExpensesPage() {
               expenseId={selectedExpenseId}
               onClose={() => setSelectedExpenseId(null)}
               onChanged={() => {
-                void refetch()
+                const trace = createActionTrace('expenses.background_refetch.after_detail_change')
+                void trace.step('refetch.expenses', () => refetch())
+                  .catch((error) => {
+                    toast.error(error instanceof Error ? error.message : 'Failed to refresh expenses')
+                  })
+                  .finally(() => trace.end())
               }}
               onDeleted={() => {
                 setSelectedExpenseId(null)
-                void refetch()
+                const trace = createActionTrace('expenses.background_refetch.after_delete')
+                void trace.step('refetch.expenses', () => refetch())
+                  .catch((error) => {
+                    toast.error(error instanceof Error ? error.message : 'Failed to refresh expenses')
+                  })
+                  .finally(() => trace.end())
               }}
             />
           ) : null}

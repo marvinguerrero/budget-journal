@@ -2,6 +2,23 @@ import { createClient } from '@/lib/supabase/client'
 import { AccountTransfer, AccountTransferFormData } from '@/types'
 import { createActionTrace } from '@/lib/performance'
 
+const ACCOUNT_TRANSFER_SELECT = `
+  id,
+  user_id,
+  from_account_id,
+  to_account_id,
+  amount,
+  transfer_fee,
+  fee_expense_id,
+  note,
+  transferred_at,
+  created_at,
+  destination_amount,
+  source_currency,
+  destination_currency,
+  exchange_rate
+`
+
 type RpcResult<T> = {
   data: T
   error: { message: string } | null
@@ -11,7 +28,7 @@ export async function getAccountTransfers(month?: number, year?: number): Promis
   const supabase = createClient()
   let query = supabase
     .from('account_transfers')
-    .select('*')
+    .select(ACCOUNT_TRANSFER_SELECT)
     .order('transferred_at', { ascending: false })
 
   if (month && year) {

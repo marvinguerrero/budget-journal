@@ -15,6 +15,81 @@ import { deleteReceiptFile, uploadExpenseReceipt } from './receipts'
 import { createActionTrace } from '@/lib/performance'
 
 const EXPENSE_SELECT = '*, personal_obligations(*), expense_participants(*)'
+const EXPENSE_LIST_SELECT = `
+  id,
+  user_id,
+  amount,
+  category,
+  note,
+  account_id,
+  shared_expense_id,
+  shared_group_id,
+  shared_budget_id,
+  shared_budget_item,
+  is_shared_budget_expense,
+  credit_billing_cycle_start,
+  credit_billing_cycle_end,
+  credit_statement_date,
+  credit_due_date,
+  receipt_path,
+  has_receipt,
+  original_amount,
+  original_currency,
+  converted_amount,
+  exchange_rate_used,
+  created_at,
+  updated_at,
+  personal_obligations(
+    id,
+    direction,
+    contact_id,
+    contact_user_id,
+    contact_name,
+    contact_email,
+    amount,
+    remaining_amount,
+    source_expense_id,
+    status
+  ),
+  expense_participants(
+    id,
+    participant_kind,
+    contact_id,
+    contact_user_id,
+    participant_name,
+    participant_email,
+    participant_phone,
+    share_amount,
+    is_payer,
+    obligation_id,
+    line_item_id
+  )
+`
+const EXPENSE_MUTATION_SELECT = `
+  id,
+  user_id,
+  amount,
+  category,
+  note,
+  account_id,
+  shared_expense_id,
+  shared_group_id,
+  shared_budget_id,
+  shared_budget_item,
+  is_shared_budget_expense,
+  credit_billing_cycle_start,
+  credit_billing_cycle_end,
+  credit_statement_date,
+  credit_due_date,
+  receipt_path,
+  has_receipt,
+  original_amount,
+  original_currency,
+  converted_amount,
+  exchange_rate_used,
+  created_at,
+  updated_at
+`
 const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
 
 type ExpensePipelineSource =
@@ -378,7 +453,7 @@ export async function getExpenses(month?: number, year?: number): Promise<Expens
   const startedAt = DEBUG_EXPENSE_PIPELINE ? performance.now() : 0
   let query = supabase
     .from('expenses')
-    .select(EXPENSE_SELECT)
+    .select(EXPENSE_LIST_SELECT)
     .order('created_at', { ascending: false })
 
   if (month && year) {
@@ -410,7 +485,7 @@ export async function getAllExpenses(): Promise<Expense[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from('expenses')
-    .select(EXPENSE_SELECT)
+    .select(EXPENSE_LIST_SELECT)
     .order('created_at', { ascending: false })
   if (error) throw error
   return sanitizeExpenseArray('getAllExpenses', data)
@@ -541,7 +616,7 @@ export async function createExpense(formData: ExpenseFormData): Promise<Expense 
           account_id: formData.account_id || null,
           created_at: formData.created_at || new Date().toISOString(),
         })
-        .select()
+        .select(EXPENSE_MUTATION_SELECT)
         .single()
     )
 
@@ -636,7 +711,7 @@ export async function updateExpense(id: string, formData: Partial<ExpenseFormDat
           .from('expenses')
           .update(baseUpdate)
           .eq('id', id)
-          .select()
+          .select(EXPENSE_MUTATION_SELECT)
           .single()
           .then(({ data: updated, error }) => {
             if (error) throw error

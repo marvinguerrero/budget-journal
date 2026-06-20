@@ -2,11 +2,23 @@ import { createClient } from '@/lib/supabase/client'
 import { CreditCardPayment } from '@/types'
 import { createActionTrace } from '@/lib/performance'
 
+const CREDIT_CARD_PAYMENT_SELECT = `
+  id,
+  user_id,
+  credit_card_account_id,
+  source_account_id,
+  transfer_id,
+  amount,
+  remaining_outstanding_after_payment,
+  paid_at,
+  created_at
+`
+
 export async function getCreditCardPayments(): Promise<CreditCardPayment[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from('credit_card_payments')
-    .select('*')
+    .select(CREDIT_CARD_PAYMENT_SELECT)
     .order('paid_at', { ascending: false })
 
   if (error) throw error

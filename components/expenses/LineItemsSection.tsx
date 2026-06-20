@@ -22,6 +22,7 @@ import {
 import { getCurrencySymbol } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
 import { cn } from '@/lib/utils'
+import { createActionTrace } from '@/lib/performance'
 import { Plus, Pencil, Trash2, Receipt as ReceiptIcon } from 'lucide-react'
 
 const EXTERNAL_VALUE = '__external__'
@@ -89,9 +90,10 @@ export function LineItemsSection({ expense, onChanged }: LineItemsSectionProps) 
   const symbol = getCurrencySymbol(currency)
 
   const load = useCallback(async () => {
+    const trace = createActionTrace('expense_itemization.refetch')
     setIsLoading(true)
     try {
-      const data = await getExpenseLineItems(expense.id)
+      const data = await trace.step('refetch.line_items', () => getExpenseLineItems(expense.id))
       setItems(data.items)
       setParticipantsByItem(data.participantsByItem)
       setObligationsByItem(data.obligationsByItem)
@@ -99,17 +101,28 @@ export function LineItemsSection({ expense, onChanged }: LineItemsSectionProps) 
       toast.error(error instanceof Error ? error.message : 'Failed to load line items')
     } finally {
       setIsLoading(false)
+      trace.end()
     }
   }, [expense.id])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void load()
-      getContacts().then(setContacts).catch(() => setContacts([]))
     }, 0)
 
     return () => window.clearTimeout(timer)
   }, [load])
+
+  useEffect(() => {
+    if (!showForm || contacts.length > 0) return
+    const trace = createActionTrace('expense_itemization.contacts.lazy_load')
+    trace.step('refetch.contacts_for_line_item_form', () => getContacts())
+      .then((nextContacts) => {
+        setContacts(nextContacts)
+      })
+      .catch(() => setContacts([]))
+      .finally(() => trace.end())
+  }, [contacts.length, showForm])
 
   const allocation = useMemo(() => computeAllocation(expense, items), [expense, items])
 

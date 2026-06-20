@@ -6,6 +6,77 @@ import {
 } from '@/types'
 import { createObligationForContact } from './expenses'
 
+const EXPENSE_LINE_ITEM_SELECT = `
+  id,
+  expense_id,
+  user_id,
+  description,
+  category,
+  original_amount,
+  original_currency,
+  converted_amount,
+  base_currency,
+  exchange_rate_used,
+  assigned_type,
+  assigned_contact_id,
+  owner_kind,
+  owner_contact_id,
+  owner_name,
+  owner_email,
+  payer_kind,
+  payer_contact_id,
+  payer_name,
+  payer_email,
+  shouldered_by_kind,
+  shouldered_by_contact_id,
+  shouldered_by_name,
+  shouldered_by_email,
+  derived_status,
+  obligation_id,
+  notes,
+  created_at,
+  updated_at
+`
+
+const LINE_ITEM_PARTICIPANT_SELECT = `
+  id,
+  expense_id,
+  user_id,
+  participant_kind,
+  contact_id,
+  contact_user_id,
+  participant_name,
+  participant_email,
+  participant_phone,
+  share_amount,
+  is_payer,
+  obligation_id,
+  line_item_id,
+  created_at
+`
+
+const LINE_ITEM_OBLIGATION_SELECT = `
+  id,
+  user_id,
+  direction,
+  contact_id,
+  relationship_id,
+  counterparty_obligation_id,
+  created_by_user_id,
+  contact_user_id,
+  contact_name,
+  contact_email,
+  amount,
+  remaining_amount,
+  category,
+  note,
+  source_expense_id,
+  source_line_item_id,
+  status,
+  created_at,
+  settled_at
+`
+
 type ParentExpense = Pick<Expense, 'id' | 'amount' | 'original_amount' | 'original_currency' | 'exchange_rate_used'>
 
 function nativeAmountOf(expense: ParentExpense): number {
@@ -80,7 +151,7 @@ export async function getExpenseLineItems(expenseId: string): Promise<{
   const supabase = createClient()
   const { data: items, error } = await supabase
     .from('expense_line_items')
-    .select('*')
+    .select(EXPENSE_LINE_ITEM_SELECT)
     .eq('expense_id', expenseId)
     .order('created_at', { ascending: true })
   if (error) throw error
@@ -91,8 +162,8 @@ export async function getExpenseLineItems(expenseId: string): Promise<{
 
   if (itemIds.length > 0) {
     const [participantsRes, obligationsRes] = await Promise.all([
-      supabase.from('expense_participants').select('*').in('line_item_id', itemIds),
-      supabase.from('personal_obligations').select('*').in('source_line_item_id', itemIds),
+      supabase.from('expense_participants').select(LINE_ITEM_PARTICIPANT_SELECT).in('line_item_id', itemIds),
+      supabase.from('personal_obligations').select(LINE_ITEM_OBLIGATION_SELECT).in('source_line_item_id', itemIds),
     ])
     if (participantsRes.error) throw participantsRes.error
     if (obligationsRes.error) throw obligationsRes.error
@@ -319,7 +390,7 @@ export async function createExpenseLineItem(
           ...personRefToColumns('shouldered_by', shoulderedBy),
         }),
     })
-    .select()
+    .select(EXPENSE_LINE_ITEM_SELECT)
     .single()
   if (error) throw error
 
@@ -406,7 +477,7 @@ export async function updateExpenseLineItem(
         }),
     })
     .eq('id', lineItem.id)
-    .select()
+    .select(EXPENSE_LINE_ITEM_SELECT)
     .single()
   if (error) throw error
 

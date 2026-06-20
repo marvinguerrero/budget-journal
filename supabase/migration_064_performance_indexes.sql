@@ -11,6 +11,20 @@
 CREATE INDEX IF NOT EXISTS idx_account_transfers_user_transferred
   ON public.account_transfers(user_id, transferred_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_account_transfers_from_transferred
+  ON public.account_transfers(from_account_id, transferred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_account_transfers_to_transferred
+  ON public.account_transfers(to_account_id, transferred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_account_created
+  ON public.expenses(account_id, created_at DESC)
+  WHERE account_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_income_entries_account_status_received
+  ON public.income_entries(account_id, status, received_at DESC)
+  WHERE account_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_expense_participants_expense_line_item_created
   ON public.expense_participants(expense_id, line_item_id, created_at);
 
@@ -25,5 +39,13 @@ CREATE INDEX IF NOT EXISTS idx_shared_expense_settlements_receiver_created
 
 CREATE INDEX IF NOT EXISTS idx_financial_accounts_user_created
   ON public.financial_accounts(user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_personal_obligation_settlements_payer_created
+  ON public.personal_obligation_settlements(payer_account_id, created_at DESC)
+  WHERE payer_account_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_personal_obligation_settlements_receiver_created
+  ON public.personal_obligation_settlements(receiver_account_id, created_at DESC)
+  WHERE receiver_account_id IS NOT NULL;
 
 NOTIFY pgrst, 'reload schema';
