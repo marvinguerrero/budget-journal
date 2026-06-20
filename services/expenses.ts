@@ -19,10 +19,13 @@ const EXPENSE_SELECT = '*, personal_obligations(*), expense_participants(*)'
 const EXPENSE_LIST_SELECT = `
   id,
   user_id,
+  owner_user_id,
+  created_by_user_id,
   amount,
   category,
   note,
   account_id,
+  shared_account_id,
   shared_expense_id,
   shared_group_id,
   shared_budget_id,
@@ -69,10 +72,13 @@ const EXPENSE_LIST_SELECT = `
 const EXPENSE_MUTATION_SELECT = `
   id,
   user_id,
+  owner_user_id,
+  created_by_user_id,
   amount,
   category,
   note,
   account_id,
+  shared_account_id,
   shared_expense_id,
   shared_group_id,
   shared_budget_id,
@@ -798,16 +804,23 @@ export async function deleteExpense(id: string): Promise<void> {
   const supabase = createClient()
   try {
     const existing = await trace.step('supabase.select.existing_expense_details', () => getExpenseById(id))
-    if (existing.receipt_path || existing.has_receipt) {
-      await trace.step('service.clear_receipt', () => clearExpenseReceipt(existing))
-    }
-
     const { error } = await trace.step('supabase.rpc.delete_expense_safely_with_balance_updates', () =>
       supabase.rpc('delete_expense_safely', {
         p_expense_id: id,
       })
     )
-    if (error) throw new Error(error.message)
+    if (error) {
+      const message = error.message.includes('This line item cannot be deleted')
+        ? 'This expense cannot be deleted because one or more itemized debts already have settlement activity. Resolve the debt first.'
+        : error.message.includes('itemized items have settlement activity')
+          ? 'This expense cannot be deleted because one or more itemized items have settlement activity. Reverse or resolve the obligation first.'
+        : error.message
+      throw new Error(message)
+    }
+
+    if (existing.receipt_path || existing.has_receipt) {
+      await trace.step('service.clear_receipt_after_expense_delete', () => clearExpenseReceipt(existing))
+    }
   } finally {
     trace.end()
   }

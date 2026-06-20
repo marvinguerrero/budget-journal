@@ -7,9 +7,10 @@ import { Label } from '@/components/ui/label'
 import { CategorySelector } from './CategorySelector'
 import { ReceiptField } from './ReceiptField'
 import { AccountSelector } from '@/components/accounts/AccountSelector'
-import { Contact, ExpenseFormData } from '@/types'
+import { Contact, ExpenseFormData, SharedFinancialAccountSummary } from '@/types'
 import { getContacts } from '@/services/contacts'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
+import { getSharedFinancialAccountsWithMe } from '@/services/sharedFinancialAccounts'
 import { getCurrencySymbol, isForeignCurrency } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
 import { format } from 'date-fns'
@@ -19,6 +20,7 @@ import Link from 'next/link'
 import { Plus, Trash2 } from 'lucide-react'
 
 const EXTERNAL_CONTACT_VALUE = '__external__'
+const SHARED_ACCOUNT_PREFIX = 'shared:'
 
 interface ExpenseFormProps {
   onSubmit: (data: ExpenseFormData) => Promise<void>
@@ -102,6 +104,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   const [receiptFile, setReceiptFile] = useState<File | null>(null)
   const [removeReceipt, setRemoveReceipt] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [sharedAccounts, setSharedAccounts] = useState<SharedFinancialAccountSummary[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -123,10 +126,32 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   }, [contactId, initialData?.contact_email, initialData?.contact_name])
 
   const { accounts } = useFinancialAccounts()
+  useEffect(() => {
+    if (isEditing) return
+    let cancelled = false
+    getSharedFinancialAccountsWithMe()
+      .then((data) => {
+        if (!cancelled) setSharedAccounts(data.filter((share) => share.can_add_expense))
+      })
+      .catch(() => {
+        if (!cancelled) setSharedAccounts([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isEditing])
+
+  const selectedSharedAccount = accountId.startsWith(SHARED_ACCOUNT_PREFIX)
+    ? sharedAccounts.find((share) => share.share_id === accountId.slice(SHARED_ACCOUNT_PREFIX.length)) ?? null
+    : null
   const selectedAccount = accounts.find((a) => a.id === accountId)
   const isForeignAccount = !!selectedAccount && isForeignCurrency(selectedAccount.currency_code, selectedAccount.base_currency_code)
   const hasExchangeRate = isForeignAccount && !!selectedAccount?.average_exchange_rate && selectedAccount.average_exchange_rate > 0
-  const currencySymbol = isForeignAccount && selectedAccount ? getCurrencySymbol(selectedAccount.currency_code) : '₱'
+  const currencySymbol = selectedSharedAccount
+    ? getCurrencySymbol(selectedSharedAccount.currency_code)
+    : isForeignAccount && selectedAccount
+      ? getCurrencySymbol(selectedAccount.currency_code)
+      : '₱'
   const convertedPreview = isForeignAccount && hasExchangeRate && amount
     ? (parseFloat(amount) || 0) * (selectedAccount?.average_exchange_rate ?? 0)
     : null
@@ -139,7 +164,7 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
   // leave canSubmit permanently blocked with no visible way to fix it.
   useEffect(() => {
     if (blocksParticipants && participants.length > 0) {
-      setParticipants([])
+      queueMicrotask(() => setParticipants([]))
     }
   }, [blocksParticipants, participants.length])
 
@@ -277,18 +302,25 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
 
     setIsSubmitting(true)
     try {
+      if (selectedSharedAccount && obligationType !== 'normal') {
+        throw new Error('Shared account expenses cannot be debt entries yet.')
+      }
+      if (selectedSharedAccount && receiptFile) {
+        throw new Error('Receipt uploads for shared account expenses are not available yet.')
+      }
       await trace.step('submit_handler', () => onSubmit({
         amount: parseFloat(amount),
         category,
         note: note.trim() || category,
-        account_id: obligationType === 'i_owe' ? null : accountId || null,
+        account_id: obligationType === 'i_owe' || selectedSharedAccount ? null : accountId || null,
+        shared_account_id: selectedSharedAccount ? selectedSharedAccount.share_id : null,
         created_at: new Date(date + 'T' + new Date().toTimeString().slice(0, 8)).toISOString(),
         obligation_type: obligationType,
         contact_id: isObligation ? obligationContactId : undefined,
         contact_name: isObligation ? obligationContactName : undefined,
         contact_email: isObligation ? obligationContactEmail : undefined,
         contact_user_id: isObligation ? obligationContactUserId : undefined,
-        receipt_file: obligationType === 'i_owe' ? null : receiptFile,
+        receipt_file: obligationType === 'i_owe' || selectedSharedAccount ? null : receiptFile,
         remove_receipt: obligationType === 'i_owe' ? false : removeReceipt,
         split_mode: splitMode,
         participants: hasParticipants
@@ -343,13 +375,13 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
         </div>
         {isForeignAccount && !hasExchangeRate && (
           <p className="text-xs text-destructive rounded-xl border border-destructive/30 bg-destructive/5 p-2.5">
-            "{selectedAccount?.name}" has no exchange rate yet — fund it with a currency exchange transfer
+            &quot;{selectedAccount?.name}&quot; has no exchange rate yet — fund it with a currency exchange transfer
             (Activity → Accounts → Transfer) before recording an expense against it.
           </p>
         )}
         {convertedPreview !== null && (
           <p className="text-xs text-muted-foreground">
-            ≈ {formatCurrency(convertedPreview)} at the account's average rate
+            ≈ {formatCurrency(convertedPreview)} at the account&apos;s average rate
           </p>
         )}
       </div>
@@ -597,8 +629,16 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
             {obligationType === 'owe_me' ? '(required)' : '(optional)'}
           </span>
         </Label>
-        <AccountSelector value={accountId} onChange={setAccountId} />
+        <AccountSelector value={accountId} onChange={setAccountId} sharedAccounts={isEditing ? [] : sharedAccounts} />
       </div>
+      )}
+
+      {selectedSharedAccount && (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <p className="text-xs text-primary">
+            This will be recorded against {selectedSharedAccount.account_name} and attributed to you as the creator.
+          </p>
+        </div>
       )}
 
       {obligationType === 'i_owe' && (
@@ -611,11 +651,11 @@ export function ExpenseForm({ onSubmit, onCancel, initialData, isEditing }: Expe
 
       {blocksParticipants && (
         <p className="text-xs text-muted-foreground">
-          Splitting with participants isn't available for foreign-currency account expenses yet.
+          Splitting with participants isn&apos;t available for foreign-currency account expenses yet.
         </p>
       )}
 
-      {obligationType !== 'i_owe' && (
+      {obligationType !== 'i_owe' && !selectedSharedAccount && (
         <ReceiptField
           existingPath={initialData?.receipt_path ?? null}
           hasExistingReceipt={initialData?.has_receipt === true}

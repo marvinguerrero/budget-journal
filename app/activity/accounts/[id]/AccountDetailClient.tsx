@@ -1,15 +1,36 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useAccountDetail, AccountDetailEntry } from '@/hooks/useAccountDetail'
 import { ACCOUNT_TYPES, CATEGORY_ICONS, CATEGORY_COLORS } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import {
-  ArrowLeft, TrendingUp, ArrowLeftRight, CreditCard, ArrowRight, HandCoins,
+  ArrowLeft, TrendingUp, ArrowLeftRight, CreditCard, ArrowRight, HandCoins, Share2, UserPlus, X, Pencil,
 } from 'lucide-react'
 import Link from 'next/link'
+import { toast } from 'sonner'
+import { getContacts } from '@/services/contacts'
+import {
+  getSharedAccessForAccount,
+  removeSharedFinancialAccountAccess,
+  shareFinancialAccount,
+} from '@/services/sharedFinancialAccounts'
+import {
+  Contact,
+  SharedFinancialAccount,
+  SharedFinancialAccountPermissionLevel,
+  SharedFinancialAccountShareForm,
+} from '@/types'
 
 type KindFilter = 'all' | 'expenses' | 'income' | 'transfers'
 
@@ -27,8 +48,140 @@ function formatDateLabel(value?: string | null) {
 }
 
 export function AccountDetailClient({ accountId }: Props) {
-  const { account, entries, isLoading, moneyIn, moneyOut } = useAccountDetail(accountId)
+  const { account, sharedAccess, entries, isLoading, moneyIn, moneyOut } = useAccountDetail(accountId)
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
+  const [shares, setShares] = useState<SharedFinancialAccount[]>([])
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [showShare, setShowShare] = useState(false)
+  const [editingShareId, setEditingShareId] = useState<string | null>(null)
+  const [shareContactId, setShareContactId] = useState('')
+  const [sharePermission, setSharePermission] = useState<SharedFinancialAccountPermissionLevel>('viewer')
+  const [canViewBalance, setCanViewBalance] = useState(true)
+  const [canViewExpenses, setCanViewExpenses] = useState(true)
+  const [canViewReceipts, setCanViewReceipts] = useState(false)
+  const [canViewItemization, setCanViewItemization] = useState(false)
+  const [canAddExpense, setCanAddExpense] = useState(false)
+  const [isSharing, setIsSharing] = useState(false)
+  const isSharedRecipient = Boolean(sharedAccess)
+  const canShowBalance = !sharedAccess || sharedAccess.can_view_balance
+  const isEditingShare = Boolean(editingShareId)
+
+  const loadSharing = useCallback(async () => {
+    if (!account || isSharedRecipient) return
+    try {
+      const [nextShares, nextContacts] = await Promise.all([
+        getSharedAccessForAccount(account.id),
+        getContacts(),
+      ])
+      setShares(nextShares)
+      setContacts(nextContacts)
+    } catch {
+      toast.error('Failed to load shared access')
+    }
+  }, [account, isSharedRecipient])
+
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void loadSharing()
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [loadSharing])
+
+  const handlePermissionChange = (next: SharedFinancialAccountPermissionLevel) => {
+    setSharePermission(next)
+    if (next === 'viewer') {
+      setCanAddExpense(false)
+      return
+    }
+    setCanAddExpense(true)
+    if (next === 'manager') {
+      setCanViewReceipts(true)
+      setCanViewItemization(true)
+    }
+  }
+
+  const activeContacts = useMemo(() =>
+    contacts.filter((contact) =>
+      contact.contact_type === 'registered'
+      && contact.link_status === 'connected'
+      && contact.linked_user_id
+      && (
+        editingShareId
+          ? shares.some((share) => share.id === editingShareId && share.shared_with_user_id === contact.linked_user_id)
+          : !shares.some((share) => share.shared_with_user_id === contact.linked_user_id)
+      )
+    ),
+    [contacts, editingShareId, shares]
+  )
+
+  const resetShareForm = () => {
+    setEditingShareId(null)
+    setShareContactId('')
+    setSharePermission('viewer')
+    setCanViewBalance(true)
+    setCanViewExpenses(true)
+    setCanViewReceipts(false)
+    setCanViewItemization(false)
+    setCanAddExpense(false)
+  }
+
+  const openShareDialog = () => {
+    resetShareForm()
+    setShowShare(true)
+  }
+
+  const openEditDialog = (share: SharedFinancialAccount) => {
+    setEditingShareId(share.id)
+    setShareContactId(share.contact_id ?? '')
+    setSharePermission(share.permission_level)
+    setCanViewBalance(share.can_view_balance)
+    setCanViewExpenses(share.can_view_expenses)
+    setCanViewReceipts(share.can_view_receipts)
+    setCanViewItemization(share.can_view_itemization)
+    setCanAddExpense(share.can_add_expense)
+    setShowShare(true)
+  }
+
+  const handleShare = async () => {
+    if (!account || !shareContactId) return
+    setIsSharing(true)
+    try {
+      const payload: SharedFinancialAccountShareForm = {
+        account_id: account.id,
+        contact_id: shareContactId,
+        permission_level: sharePermission,
+        can_view_balance: canViewBalance,
+        can_view_expenses: canViewExpenses,
+        can_view_receipts: canViewReceipts,
+        can_view_itemization: canViewItemization,
+        can_add_expense: canAddExpense,
+        can_edit_own_expense: sharePermission !== 'viewer',
+        can_manage_sharing: sharePermission === 'manager',
+      }
+      await shareFinancialAccount(payload)
+      toast.success(isEditingShare ? 'Permission updated' : 'Account shared')
+      setShowShare(false)
+      resetShareForm()
+      await loadSharing()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to share account')
+    } finally {
+      setIsSharing(false)
+    }
+  }
+
+  const handleRemoveShare = async (shareId: string) => {
+    try {
+      await removeSharedFinancialAccountAccess(shareId)
+      setShares((prev) => prev.filter((share) => share.id !== shareId))
+      toast.success('Access removed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove access')
+    }
+  }
 
   const filtered = useMemo(() =>
     kindFilter === 'all' ? entries :
@@ -110,19 +263,19 @@ export function AccountDetailClient({ accountId }: Props) {
           <div className="rounded-xl bg-muted/60 p-3 text-center">
             <p className="text-[10px] text-muted-foreground mb-1">{isLiab ? 'Current Debt' : 'Balance'}</p>
             <p className={cn('text-sm font-bold tabular-nums leading-tight', balanceColor)}>
-              {balanceDisplay}
+              {canShowBalance ? balanceDisplay : 'Hidden'}
             </p>
           </div>
           <div className="rounded-xl bg-emerald-500/10 p-3 text-center">
             <p className="text-[10px] text-muted-foreground mb-1">{isLiab ? 'Paid Off' : 'Money In'}</p>
             <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums leading-tight">
-              +{formatCurrency(moneyIn)}
+              {canShowBalance ? `+${formatCurrency(moneyIn)}` : 'Hidden'}
             </p>
           </div>
           <div className="rounded-xl bg-rose-500/10 p-3 text-center">
             <p className="text-[10px] text-muted-foreground mb-1">{isLiab ? 'Charged' : 'Money Out'}</p>
             <p className="text-sm font-bold text-rose-600 dark:text-rose-400 tabular-nums leading-tight">
-              -{formatCurrency(moneyOut)}
+              {canShowBalance ? `-${formatCurrency(moneyOut)}` : 'Hidden'}
             </p>
           </div>
         </div>
@@ -155,6 +308,61 @@ export function AccountDetailClient({ accountId }: Props) {
           </div>
         )}
       </div>
+
+      {isSharedRecipient && sharedAccess ? (
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Share2 className="w-4 h-4 text-primary" />
+            <h2 className="font-semibold text-sm">Shared With Me</h2>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Owner: {sharedAccess.owner_email ?? 'Account owner'} · Permission: {sharedAccess.permission_level}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {sharedAccess.can_view_balance && <PermissionPill label="Balance" />}
+            {sharedAccess.can_view_expenses && <PermissionPill label="Expenses" />}
+            {sharedAccess.can_view_receipts && <PermissionPill label="Receipts" />}
+            {sharedAccess.can_view_itemization && <PermissionPill label="Itemization" />}
+            {sharedAccess.can_add_expense && <PermissionPill label="Add Expense" />}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Share2 className="w-4 h-4 text-primary" />
+              <h2 className="font-semibold text-sm">Shared Access</h2>
+            </div>
+            <Button type="button" size="sm" className="h-8 rounded-xl gap-1.5 text-xs" onClick={openShareDialog}>
+              <UserPlus className="w-3.5 h-3.5" />
+              Share
+            </Button>
+          </div>
+
+          {shares.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No contacts have access to this account.</p>
+          ) : (
+            <div className="space-y-2">
+              {shares.map((share) => (
+                <div key={share.id} className="flex items-center gap-3 rounded-xl bg-muted/50 p-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">{share.contacts?.name ?? share.contacts?.email ?? 'Shared contact'}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {share.permission_level} · {share.status}
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="h-8 w-8 rounded-xl p-0" onClick={() => openEditDialog(share)} title="Edit permission">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" className="h-8 w-8 rounded-xl p-0" onClick={() => handleRemoveShare(share.id)} title="Remove access">
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Kind filter chips */}
       <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide -mx-4 px-4 lg:mx-0 lg:px-0">
@@ -204,19 +412,110 @@ export function AccountDetailClient({ accountId }: Props) {
                 key={`${entry.kind}-${entry.id}`}
                 entry={entry}
                 isLiab={isLiab}
+                canViewReceipts={!sharedAccess || sharedAccess.can_view_receipts}
+                accountName={account.name}
               />
             ))}
           </div>
         )}
       </div>
+
+      <Dialog open={showShare} onOpenChange={(open) => {
+        setShowShare(open)
+        if (!open) resetShareForm()
+      }}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader><DialogTitle>{isEditingShare ? 'Edit Permission' : 'Share Account'}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Contact</Label>
+              <Select value={shareContactId} onValueChange={(v: string | null) => setShareContactId(v ?? '')} disabled={isEditingShare}>
+                <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Select connected contact" /></SelectTrigger>
+                <SelectContent>
+                  {activeContacts.map((contact) => (
+                    <SelectItem key={contact.id} value={contact.id}>{contact.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {activeContacts.length === 0 && (
+                <p className="text-xs text-muted-foreground">Only connected registered contacts can receive account access.</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Permission</Label>
+              <Select value={sharePermission} onValueChange={(v: string | null) => handlePermissionChange((v ?? 'viewer') as SharedFinancialAccountPermissionLevel)}>
+                <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="viewer">Viewer</SelectItem>
+                  <SelectItem value="contributor">Contributor</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <ToggleRow label="View Balance" checked={canViewBalance} onChange={setCanViewBalance} />
+              <ToggleRow label="View Expenses" checked={canViewExpenses} onChange={setCanViewExpenses} />
+              <ToggleRow label="View Receipts" checked={canViewReceipts} onChange={setCanViewReceipts} />
+              <ToggleRow label="View Itemization" checked={canViewItemization} onChange={setCanViewItemization} />
+              <ToggleRow label="Add Expense" checked={canAddExpense} onChange={setCanAddExpense} disabled={sharePermission === 'viewer'} />
+            </div>
+
+            <Button type="button" className="w-full h-11 rounded-xl" disabled={isSharing || !shareContactId} onClick={handleShare}>
+              {isSharing ? (isEditingShare ? 'Updating...' : 'Sharing...') : (isEditingShare ? 'Update Permission' : 'Share Account')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function AccountDetailEntryItem({ entry, isLiab }: { entry: AccountDetailEntry; isLiab: boolean }) {
+function PermissionPill({ label }: { label: string }) {
+  return <span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">{label}</span>
+}
+
+function ToggleRow({
+  label, checked, onChange, disabled,
+}: {
+  label: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+  disabled?: boolean
+}) {
+  return (
+    <label className={cn('flex items-center gap-2 rounded-xl border border-border p-2.5 text-xs font-medium', disabled && 'opacity-50')}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-4 w-4 rounded border-border accent-primary"
+      />
+      {label}
+    </label>
+  )
+}
+
+function AccountDetailEntryItem({
+  entry,
+  isLiab,
+  canViewReceipts,
+  accountName,
+}: {
+  entry: AccountDetailEntry
+  isLiab: boolean
+  canViewReceipts: boolean
+  accountName: string
+}) {
   const date = new Date(entry.date).toLocaleDateString('en-PH', {
     month: 'short', day: 'numeric', year: 'numeric',
   })
+  const collaboratorCreated = entry.kind === 'expense'
+    && entry.createdByUserId
+    && entry.ownerUserId
+    && entry.createdByUserId !== entry.ownerUserId
 
   if (entry.kind === 'expense') {
     const icon  = CATEGORY_ICONS[entry.category] ?? '📦'
@@ -247,6 +546,18 @@ function AccountDetailEntryItem({ entry, isLiab }: { entry: AccountDetailEntry; 
               {icon} {entry.category}
             </span>
           </p>
+          {(collaboratorCreated || entry.hasReceipt) && (
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+              {collaboratorCreated && (
+                <>
+                  <span>Created by: {entry.createdByLabel}</span>
+                  <span>Paid from: {accountName}</span>
+                  <span>Owner: {entry.ownerLabel}</span>
+                </>
+              )}
+              {entry.hasReceipt && canViewReceipts && <span>Receipt attached</span>}
+            </div>
+          )}
         </div>
         <p className={cn('text-sm font-bold tabular-nums flex-shrink-0', isLiab ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400')}>
           {isLiab ? `+${formatCurrency(entry.amount)} debt` : `-${formatCurrency(entry.amount)}`}

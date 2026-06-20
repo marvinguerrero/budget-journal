@@ -130,10 +130,10 @@ export function LineItemsSection({ expense, onChanged }: LineItemsSectionProps) 
   const openEdit = (item: ExpenseLineItem) => { setEditingItem(item); setShowForm(true) }
 
   const handleDelete = async (item: ExpenseLineItem) => {
-    if (!window.confirm(`Delete "${item.description}"?`)) return
+    if (!window.confirm(`This will delete only this itemized line. The parent expense will remain.\n\nDelete "${item.description}"?`)) return
     try {
       await deleteExpenseLineItem(item.id)
-      toast.success('Line item deleted')
+      toast.success('Item deleted')
       await load()
       onChanged?.()
     } catch (error) {
@@ -256,8 +256,9 @@ export function LineItemsSection({ expense, onChanged }: LineItemsSectionProps) 
                     <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEdit(item)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => handleDelete(item)}>
+                    <Button type="button" variant="ghost" size="sm" className="h-8 px-2 gap-1 text-xs" onClick={() => handleDelete(item)}>
                       <Trash2 className="h-3.5 w-3.5" />
+                      Delete Item
                     </Button>
                   </div>
                 </div>

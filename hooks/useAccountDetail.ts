@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { FinancialAccount } from '@/types'
+import { FinancialAccount, SharedFinancialAccountSummary } from '@/types'
 import { toast } from 'sonner'
 import { QUERY_LIMITS } from '@/lib/queryLimits'
+import { getSharedFinancialAccountSummary } from '@/services/sharedFinancialAccounts'
 
 const DETAIL_ACCOUNT_SELECT = `
   id,
@@ -15,14 +16,28 @@ const DETAIL_ACCOUNT_SELECT = `
   type,
   category,
   balance,
+  credit_limit,
+  soa_day,
+  due_day,
+  last_statement_date,
+  current_statement_date,
+  current_due_date,
   currency_code,
   base_currency_code,
+  foreign_balance,
+  base_cost_balance,
+  average_exchange_rate,
   created_at
 `
 
 function firstRelation<T>(relation: T | T[] | null | undefined): T | null {
   if (!relation) return null
   return Array.isArray(relation) ? relation[0] ?? null : relation
+}
+
+function profileLabel(email?: string | null) {
+  if (!email) return 'Budget Journal user'
+  return email.split('@')[0] || email
 }
 
 export type AccountDetailEntry =
@@ -33,6 +48,11 @@ export type AccountDetailEntry =
       amount: number
       category: string
       note: string
+      ownerUserId?: string | null
+      createdByUserId?: string | null
+      ownerLabel?: string
+      createdByLabel?: string
+      hasReceipt?: boolean
     }
   | {
       kind: 'shared_expense'
@@ -76,6 +96,7 @@ export type AccountDetailEntry =
 
 export function useAccountDetail(accountId: string) {
   const [account, setAccount] = useState<FinancialAccount | null>(null)
+  const [sharedAccess, setSharedAccess] = useState<SharedFinancialAccountSummary | null>(null)
   const [entries, setEntries] = useState<AccountDetailEntry[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
@@ -96,11 +117,11 @@ export function useAccountDetail(accountId: string) {
         { data: personalPaid,   error: pspErr },
         { data: personalRecv,   error: psrErr },
       ] = await Promise.all([
-        supabase.from('financial_accounts').select(DETAIL_ACCOUNT_SELECT).eq('id', accountId).single(),
+        supabase.from('financial_accounts').select(DETAIL_ACCOUNT_SELECT).eq('id', accountId).maybeSingle(),
         supabase.from('financial_accounts').select(DETAIL_ACCOUNT_SELECT),
         supabase
           .from('expenses')
-          .select('id, created_at, amount, category, note')
+          .select('id, created_at, amount, category, note, owner_user_id, created_by_user_id, has_receipt')
           .eq('account_id', accountId)
           .order('created_at', { ascending: false })
           .limit(QUERY_LIMITS.accountActivity),
@@ -155,16 +176,67 @@ export function useAccountDetail(accountId: string) {
       if (pspErr) throw pspErr
       if (psrErr) throw psrErr
 
-      setAccount(acc)
+      let detailAccount = acc as FinancialAccount | null
+      const detailSharedAccess: SharedFinancialAccountSummary | null = await getSharedFinancialAccountSummary(accountId)
+
+      if (!detailAccount) {
+        if (detailSharedAccess) {
+          detailAccount = {
+            id: detailSharedAccess.account_id,
+            user_id: detailSharedAccess.owner_user_id,
+            name: detailSharedAccess.account_name,
+            emoji: detailSharedAccess.account_emoji,
+            color: detailSharedAccess.account_color,
+            type: detailSharedAccess.account_type,
+            category: detailSharedAccess.account_category,
+            balance: Number(detailSharedAccess.balance ?? 0),
+            currency_code: detailSharedAccess.currency_code,
+            base_currency_code: detailSharedAccess.base_currency_code,
+            created_at: '',
+          }
+        }
+      }
+
+      setAccount(detailAccount)
+      setSharedAccess(detailSharedAccess)
 
       const accMap = new Map<string, FinancialAccount>(
         (allAccounts ?? []).map((a: FinancialAccount) => [a.id, a])
       )
+      if (detailAccount) accMap.set(detailAccount.id, detailAccount)
 
       const result: AccountDetailEntry[] = []
+      const auditUserIds = Array.from(new Set((expenses ?? []).flatMap((expense) => [
+        expense.owner_user_id,
+        expense.created_by_user_id,
+      ]).filter((id): id is string => Boolean(id))))
+      const profileMap = new Map<string, string>()
+
+      if (auditUserIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, email')
+          .in('id', auditUserIds)
+
+        for (const profile of profiles ?? []) {
+          profileMap.set(profile.id, profileLabel(profile.email))
+        }
+      }
 
       for (const e of expenses ?? []) {
-        result.push({ kind: 'expense', id: e.id, date: e.created_at, amount: e.amount, category: e.category, note: e.note })
+        result.push({
+          kind: 'expense',
+          id: e.id,
+          date: e.created_at,
+          amount: e.amount,
+          category: e.category,
+          note: e.note,
+          ownerUserId: e.owner_user_id,
+          createdByUserId: e.created_by_user_id,
+          ownerLabel: e.owner_user_id ? profileMap.get(e.owner_user_id) ?? 'Owner' : 'Owner',
+          createdByLabel: e.created_by_user_id ? profileMap.get(e.created_by_user_id) ?? 'Creator' : 'Creator',
+          hasReceipt: Boolean(e.has_receipt),
+        })
       }
 
       for (const se of sharedExpenses ?? []) {
@@ -283,5 +355,5 @@ export function useAccountDetail(accountId: string) {
     [entries]
   )
 
-  return { account, entries, isLoading, moneyIn, moneyOut, reload: load }
+  return { account, sharedAccess, entries, isLoading, moneyIn, moneyOut, reload: load }
 }

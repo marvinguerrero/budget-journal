@@ -106,6 +106,66 @@ export interface FinancialAccountFormData {
   currency_code?: string
 }
 
+export type SharedFinancialAccountPermissionLevel = 'viewer' | 'contributor' | 'manager'
+export type SharedFinancialAccountStatus = 'active' | 'removed'
+
+export interface SharedFinancialAccount {
+  id: string
+  account_id: string
+  owner_user_id: string
+  shared_with_user_id: string
+  contact_id: string | null
+  permission_level: SharedFinancialAccountPermissionLevel
+  can_view_balance: boolean
+  can_view_expenses: boolean
+  can_view_receipts: boolean
+  can_view_itemization: boolean
+  can_add_expense: boolean
+  can_edit_own_expense: boolean
+  can_manage_sharing: boolean
+  status: SharedFinancialAccountStatus
+  created_at: string
+  updated_at: string
+  contacts?: Contact | null
+}
+
+export interface SharedFinancialAccountSummary {
+  share_id: string
+  account_id: string
+  owner_user_id: string
+  owner_email: string | null
+  account_name: string
+  account_emoji: string
+  account_color: string
+  account_type: AccountType
+  account_category: AccountCategory
+  balance: number | null
+  currency_code: string
+  base_currency_code: string
+  permission_level: SharedFinancialAccountPermissionLevel
+  can_view_balance: boolean
+  can_view_expenses: boolean
+  can_view_receipts: boolean
+  can_view_itemization: boolean
+  can_add_expense: boolean
+  can_edit_own_expense: boolean
+  can_manage_sharing: boolean
+  status: SharedFinancialAccountStatus
+}
+
+export interface SharedFinancialAccountShareForm {
+  account_id: string
+  contact_id: string
+  permission_level: SharedFinancialAccountPermissionLevel
+  can_view_balance: boolean
+  can_view_expenses: boolean
+  can_view_receipts: boolean
+  can_view_itemization: boolean
+  can_add_expense: boolean
+  can_edit_own_expense: boolean
+  can_manage_sharing: boolean
+}
+
 export type IncomeStatus = 'expected' | 'received'
 
 export interface IncomeEntry {
@@ -314,10 +374,13 @@ export interface SharedExpenseSplit {
 export interface Expense {
   id: string
   user_id: string
+  owner_user_id?: string | null
+  created_by_user_id?: string | null
   amount: number
   category: string
   note: string
   account_id?: string | null
+  shared_account_id?: string | null
   shared_expense_id?: string | null
   shared_group_id?: string | null
   shared_budget_id?: string | null
@@ -512,6 +575,7 @@ export interface ExpenseFormData {
   category: string
   note: string
   account_id?: string | null
+  shared_account_id?: string | null
   created_at?: string
   obligation_type?: 'normal' | 'owe_me' | 'i_owe'
   contact_id?: string | null

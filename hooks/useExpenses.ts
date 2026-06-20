@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useExpenseStore } from '@/store/useExpenseStore'
 import { getExpenses, createExpense, updateExpense, deleteExpense } from '@/services/expenses'
 import { getBudgets, createBudget, updateBudget, deleteBudget } from '@/services/budgets'
+import { createSharedAccountExpense } from '@/services/sharedFinancialAccounts'
 import { Expense, ExpenseFormData, BudgetFormData } from '@/types'
 import { getCurrentMonth } from '@/utils/format'
 import { toast } from 'sonner'
@@ -112,7 +113,17 @@ export function useExpenses(month?: number, year?: number) {
       obligationType: formData.obligation_type ?? 'normal',
     })
     try {
-      const newExpense = await trace.step('service.create_expense', () => createExpense(formData))
+      const newExpense = await trace.step('service.create_expense', () => (
+        formData.shared_account_id
+          ? createSharedAccountExpense({
+            sharedAccountId: formData.shared_account_id,
+            amount: formData.amount,
+            category: formData.category,
+            note: formData.note,
+            createdAt: formData.created_at,
+          })
+          : createExpense(formData)
+      ))
       await trace.step('local_state.insert', async () => {
         if (newExpense) addExpense(newExpense)
       })

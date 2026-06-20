@@ -515,11 +515,13 @@ export async function updateExpenseLineItem(
 
 export async function deleteExpenseLineItem(id: string): Promise<void> {
   const supabase = createClient()
-  // No manual cleanup needed: expense_participants.line_item_id cascades on
-  // delete, and personal_obligations.source_line_item_id is set null (the
-  // obligation itself survives, intact but unlinked from the receipt — never
-  // silently destroyed). The block_line_item_delete_with_activity trigger
-  // rejects the whole delete up front if any settlement activity exists.
-  const { error } = await supabase.from('expense_line_items').delete().eq('id', id)
-  if (error) throw new Error(error.message)
+  const { error } = await supabase.rpc('delete_expense_line_item_safely', {
+    p_line_item_id: id,
+  })
+  if (error) {
+    const message = error.message.includes('settlement movement')
+      ? 'This item cannot be deleted because settlement activity already exists. Reverse or resolve the obligation first.'
+      : error.message
+    throw new Error(message)
+  }
 }

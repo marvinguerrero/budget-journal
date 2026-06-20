@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { useAccountActivity } from '@/hooks/useAccountActivity'
 import { deleteExpense } from '@/services/expenses'
@@ -21,13 +21,14 @@ import {
 } from '@/components/ui/select'
 import { ActivityFeedItem } from '@/components/accounts/ActivityFeedItem'
 import { ActivityEntry } from '@/hooks/useAccountActivity'
-import { FinancialAccount } from '@/types'
-import { Settings, TrendingUp, TrendingDown, ArrowLeftRight } from 'lucide-react'
+import { FinancialAccount, SharedFinancialAccountSummary } from '@/types'
+import { Settings, TrendingUp, TrendingDown, ArrowLeftRight, Share2 } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { toast } from 'sonner'
 import { createActionTrace, perfNow } from '@/lib/performance'
+import { getSharedFinancialAccountsWithMe } from '@/services/sharedFinancialAccounts'
 
 const now = new Date()
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
@@ -62,6 +63,7 @@ function balanceColor(acc: FinancialAccount) {
 
 export default function AccountsPage() {
   const { accounts, isLoading, reload: reloadAccounts } = useFinancialAccounts()
+  const [sharedWithMe, setSharedWithMe] = useState<SharedFinancialAccountSummary[]>([])
 
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'asset' | 'liability'>('all')
   const [typeFilter, setTypeFilter]         = useState('all')
@@ -72,6 +74,20 @@ export default function AccountsPage() {
   const typeLabel = (type: string) => ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? type
   const typeEmoji = (type: string, category: FinancialAccount['category']) =>
     ACCOUNT_TYPES.find((t) => t.value === type)?.emoji ?? (category === 'liability' ? '💳' : '🏷️')
+
+  useEffect(() => {
+    let cancelled = false
+    getSharedFinancialAccountsWithMe()
+      .then((data) => {
+        if (!cancelled) setSharedWithMe(data)
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Failed to load shared accounts')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // ── Financial summary ─────────────────────────────────────────
   const assetAccounts     = useMemo(() => accounts.filter((a) => a.category !== 'liability'), [accounts])
@@ -299,7 +315,7 @@ export default function AccountsPage() {
       </div>
       {isUnsupportedFx && (
         <p className="text-xs text-destructive rounded-xl border border-destructive/30 bg-destructive/5 p-2.5">
-          Transfers out of a foreign-currency account aren't supported yet — only PHP → foreign-currency
+          Transfers out of a foreign-currency account aren&apos;t supported yet — only PHP → foreign-currency
           exchanges are. Pick a PHP account as the source.
         </p>
       )}
@@ -502,23 +518,35 @@ export default function AccountsPage() {
         // Grouped: Assets then Liabilities
         <div className="space-y-4">
           {assetAccounts.length > 0 && (
-            <AccountGroup
-              label="Assets"
-              accounts={categoryFilter === 'liability' ? [] : assetAccounts}
-              groupTotal={totalAssets}
-              totalLabel={formatCurrency(totalAssets)}
-              totalColor="text-emerald-600 dark:text-emerald-400"
-            />
+              <AccountGroup
+                label="Assets"
+                accounts={categoryFilter === 'liability' ? [] : assetAccounts}
+                totalLabel={formatCurrency(totalAssets)}
+                totalColor="text-emerald-600 dark:text-emerald-400"
+              />
           )}
           {liabilityAccounts.length > 0 && categoryFilter !== 'asset' && (
-            <AccountGroup
-              label="Liabilities"
-              accounts={liabilityAccounts}
-              groupTotal={totalLiabilities}
-              totalLabel={totalLiabilities > 0 ? `${formatCurrency(totalLiabilities)} owed` : 'No debt'}
-              totalColor={totalLiabilities > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
-            />
+              <AccountGroup
+                label="Liabilities"
+                accounts={liabilityAccounts}
+                totalLabel={totalLiabilities > 0 ? `${formatCurrency(totalLiabilities)} owed` : 'No debt'}
+                totalColor={totalLiabilities > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
+              />
           )}
+        </div>
+      )}
+
+      {sharedWithMe.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-1">
+            <Share2 className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-bold">Shared With Me</h2>
+          </div>
+          <div className="space-y-2">
+            {sharedWithMe.map((share) => (
+              <SharedAccountCard key={share.share_id} share={share} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -607,11 +635,10 @@ export default function AccountsPage() {
 // ── Sub-components ────────────────────────────────────────────
 
 function AccountGroup({
-  label, accounts, groupTotal, totalLabel, totalColor,
+  label, accounts, totalLabel, totalColor,
 }: {
   label: string
   accounts: FinancialAccount[]
-  groupTotal: number
   totalLabel: string
   totalColor: string
 }) {
@@ -624,6 +651,39 @@ function AccountGroup({
       </div>
       {accounts.map((acc) => <AccountCard key={acc.id} acc={acc} />)}
     </div>
+  )
+}
+
+function displaySharedBalance(share: SharedFinancialAccountSummary) {
+  if (!share.can_view_balance || share.balance === null) return 'Hidden'
+  if (share.account_category === 'liability') {
+    return share.balance < 0 ? `${formatCurrency(Math.abs(share.balance))} owed` : 'No debt'
+  }
+  return formatCurrency(share.balance)
+}
+
+function SharedAccountCard({ share }: { share: SharedFinancialAccountSummary }) {
+  const isLiab = share.account_category === 'liability'
+  const typeInfo = ACCOUNT_TYPES.find((t) => t.value === share.account_type)
+  return (
+    <Link href={`/activity/accounts/${share.account_id}`} className="flex items-center gap-3 p-4 rounded-2xl border border-border bg-card hover:bg-accent/30 active:scale-[0.99] transition-all">
+      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-lg flex-shrink-0">
+        {share.account_emoji}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold truncate">{share.account_name}</p>
+        <p className="text-[10px] text-muted-foreground">
+          Owner: {share.owner_email ?? 'Account owner'} · {typeInfo?.label ?? share.account_type}
+          {isLiab && <span className="ml-1 text-amber-500">· Liability</span>}
+        </p>
+      </div>
+      <div className="text-right flex-shrink-0">
+        <p className={cn('text-sm font-bold tabular-nums', share.can_view_balance ? (isLiab ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400') : 'text-muted-foreground')}>
+          {displaySharedBalance(share)}
+        </p>
+        <p className="text-[10px] text-muted-foreground capitalize">{share.permission_level}</p>
+      </div>
+    </Link>
   )
 }
 

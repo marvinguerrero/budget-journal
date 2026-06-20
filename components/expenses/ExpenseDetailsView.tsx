@@ -57,6 +57,7 @@ export function ExpenseDetailsView({
   const [details, setDetails] = useState<ExpenseDetailsData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [editOpen, setEditOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const loadDetails = async () => {
     setIsLoading(true)
@@ -101,12 +102,20 @@ export function ExpenseDetailsView({
   }
 
   const handleDelete = async () => {
-    if (!window.confirm('Delete this expense?')) return
-    await deleteExpense(expenseId)
-    toast.success('Expense deleted')
-    onDeleted?.()
-    onClose?.()
-    router.refresh()
+    if (isDeleting) return
+    if (!window.confirm('This will delete the expense, receipt, and all itemized lines.')) return
+    setIsDeleting(true)
+    try {
+      await deleteExpense(expenseId)
+      toast.success('Expense deleted')
+      onDeleted?.()
+      onClose?.()
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete expense')
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   if (isLoading) {
@@ -265,9 +274,9 @@ export function ExpenseDetailsView({
             <Pencil className="h-4 w-4" />
             Edit Expense
           </Button>
-          <Button type="button" variant="destructive" onClick={handleDelete}>
+          <Button type="button" variant="destructive" onClick={handleDelete} disabled={isDeleting}>
             <Trash2 className="h-4 w-4" />
-            Delete Expense
+            {isDeleting ? 'Deleting...' : 'Delete Expense'}
           </Button>
         </div>
       </Section>

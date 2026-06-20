@@ -6,14 +6,16 @@ import {
 } from '@/components/ui/select'
 import { formatCurrency } from '@/utils/format'
 import { isLiabilityType } from '@/lib/constants'
+import { SharedFinancialAccountSummary } from '@/types'
 
 interface AccountSelectorProps {
   value: string
   onChange: (value: string) => void
   className?: string
+  sharedAccounts?: SharedFinancialAccountSummary[]
 }
 
-export function AccountSelector({ value, onChange, className }: AccountSelectorProps) {
+export function AccountSelector({ value, onChange, className, sharedAccounts = [] }: AccountSelectorProps) {
   const { accounts } = useFinancialAccounts()
 
   const displayBalance = (acc: { type: string; balance: number }) =>
@@ -41,6 +43,21 @@ export function AccountSelector({ value, onChange, className }: AccountSelectorP
             </span>
           </SelectItem>
         ))}
+        {sharedAccounts.length > 0 && (
+          <>
+            {sharedAccounts.map((share) => (
+              <SelectItem key={share.share_id} value={`shared:${share.share_id}`}>
+                <span className="flex items-center gap-2">
+                  {share.account_emoji} {share.account_name}
+                  <span className="text-xs text-muted-foreground ml-1">
+                    Shared · {share.permission_level}
+                    {share.can_view_balance && share.balance !== null ? ` · ${formatCurrency(share.balance)}` : ''}
+                  </span>
+                </span>
+              </SelectItem>
+            ))}
+          </>
+        )}
       </SelectContent>
     </Select>
   )
