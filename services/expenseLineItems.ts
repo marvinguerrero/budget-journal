@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Expense, ExpenseLineItem, ExpenseLineItemFormData, ExpenseParticipant,
   PersonalObligation, LineItemAllocation, ExpenseParticipantFormData,
+  PersonRef, LineItemDerivedStatus,
 } from '@/types'
 import { createObligationForContact } from './expenses'
 
@@ -11,7 +12,7 @@ function nativeAmountOf(expense: ParentExpense): number {
   return expense.original_amount ?? expense.amount
 }
 
-/** Converts a native-currency share to PHP using the parent's already-established rate. Never recalculates it. */
+/** Converts a native-currency amount to PHP using the parent's already-established rate. Never recalculates it. */
 function toPhp(expense: ParentExpense, nativeAmount: number): number {
   const rate = expense.exchange_rate_used ?? 1
   return Math.round(nativeAmount * rate * 100) / 100
@@ -27,6 +28,47 @@ export function computeAllocation(expense: ParentExpense, items: ExpenseLineItem
     unallocated,
     isFullyAllocated: Math.abs(allocated - nativeTotal) < 0.01,
     percentAllocated: nativeTotal > 0 ? Math.min(100, (allocated / nativeTotal) * 100) : 0,
+  }
+}
+
+const SELF: PersonRef = { kind: 'self' }
+
+function personKey(ref: PersonRef | undefined): string {
+  const r = ref ?? SELF
+  if (r.kind === 'self') return 'self'
+  if (r.kind === 'contact') return `contact:${r.contact_id ?? ''}`
+  return `external:${(r.name ?? '').trim().toLowerCase()}`
+}
+
+/**
+ * Mirrors compute_line_item_derived_status() in migration_063 exactly.
+ * Kept in sync deliberately — this decides whether/how to create an
+ * obligation; the SQL trigger independently persists the same result
+ * to derived_status regardless of which code path wrote the row.
+ */
+export function deriveLineItemStatus(owner: PersonRef | undefined, payer: PersonRef | undefined, shoulderedBy: PersonRef | undefined): LineItemDerivedStatus {
+  const ownerKey = personKey(owner)
+  const payerKey = personKey(payer)
+  const shoulderedKey = personKey(shoulderedBy)
+
+  if (payerKey === shoulderedKey) {
+    return ownerKey === payerKey ? 'personal' : 'gift'
+  }
+  if (ownerKey === payerKey) {
+    if (ownerKey === 'self') return 'payable'
+    if (shoulderedKey === 'self') return 'receivable'
+    return 'shared'
+  }
+  return 'shared'
+}
+
+function personRefToColumns(prefix: 'owner' | 'payer' | 'shouldered_by', ref: PersonRef | undefined) {
+  const r = ref ?? SELF
+  return {
+    [`${prefix}_kind`]: r.kind,
+    [`${prefix}_contact_id`]: r.kind === 'contact' ? r.contact_id ?? null : null,
+    [`${prefix}_name`]: r.kind === 'self' ? null : r.name ?? null,
+    [`${prefix}_email`]: r.kind === 'self' ? null : r.email ?? null,
   }
 }
 
@@ -103,8 +145,7 @@ async function createLineItemParticipants(params: {
 
     // Participant shares are native-currency sub-portions of the line item (not
     // their own stored row with a converted_amount), so we convert them to PHP
-    // here using the parent's already-established rate — same formula the DB
-    // trigger uses for whole line items, just applied to a fraction of one.
+    // here using the parent's already-established rate.
     if (payerIsCurrentUser && !p.is_payer && !isCurrentUser && p.share_amount > 0) {
       const obligation = await createObligationForContact({
         direction: 'owed_to_user',
@@ -194,6 +235,46 @@ async function clearLineItemAssignment(lineItemId: string) {
   await supabase.from('expense_line_items').update({ obligation_id: null }).eq('id', lineItemId)
 }
 
+/** Creates the obligation implied by a receivable/payable status, if any. Returns the new obligation id, or null. */
+async function createOwnershipObligation(params: {
+  expense: ParentExpense
+  lineItemId: string
+  lineItemAmountPhp: number
+  category: string
+  description: string
+  status: LineItemDerivedStatus
+  owner: PersonRef
+  shoulderedBy: PersonRef
+}): Promise<string | null> {
+  if (params.status === 'payable') {
+    // self owes shouldered_by
+    return (await createObligationForContact({
+      direction: 'user_owes',
+      contactId: params.shoulderedBy.kind === 'contact' ? params.shoulderedBy.contact_id ?? null : null,
+      contactName: params.shoulderedBy.name ?? '',
+      contactEmail: params.shoulderedBy.email ?? null,
+      amount: params.lineItemAmountPhp,
+      category: params.category,
+      note: params.description,
+      sourceLineItemId: params.lineItemId,
+    })).id
+  }
+  if (params.status === 'receivable') {
+    // owner/payer owes self (shouldered it)
+    return (await createObligationForContact({
+      direction: 'owed_to_user',
+      contactId: params.owner.kind === 'contact' ? params.owner.contact_id ?? null : null,
+      contactName: params.owner.name ?? '',
+      contactEmail: params.owner.email ?? null,
+      amount: params.lineItemAmountPhp,
+      category: params.category,
+      note: params.description,
+      sourceLineItemId: params.lineItemId,
+    })).id
+  }
+  return null
+}
+
 export async function createExpenseLineItem(
   expense: ParentExpense,
   existingItems: ExpenseLineItem[],
@@ -210,13 +291,17 @@ export async function createExpenseLineItem(
       `Line items would total more than the receipt amount (${(existingTotal + formData.original_amount).toFixed(2)} > ${nativeTotal.toFixed(2)}).`
     )
   }
-  if ((formData.assigned_type === 'owe_me' || formData.assigned_type === 'i_owe') && !formData.contact_name?.trim()) {
-    throw new Error('Contact is required.')
+
+  const owner = formData.owner ?? SELF
+  const payer = formData.payer ?? SELF
+  const shoulderedBy = formData.shouldered_by ?? SELF
+
+  if (!formData.is_shared_split) {
+    if (owner.kind !== 'self' && !owner.name?.trim()) throw new Error('Owner is required.')
+    if (payer.kind !== 'self' && !payer.name?.trim()) throw new Error('Payer is required.')
+    if (shoulderedBy.kind !== 'self' && !shoulderedBy.name?.trim()) throw new Error('Shouldered By is required.')
   }
 
-  // original_currency / exchange_rate_used / converted_amount are computed
-  // server-side by trg_compute_and_validate_line_item_allocation — we only
-  // submit original_amount and let the trigger derive the rest from the parent.
   const { data: item, error } = await supabase
     .from('expense_line_items')
     .insert({
@@ -225,37 +310,37 @@ export async function createExpenseLineItem(
       description: formData.description.trim(),
       category: formData.category ?? null,
       original_amount: formData.original_amount,
-      assigned_type: formData.assigned_type,
-      assigned_contact_id: formData.contact_id ?? null,
       notes: formData.notes?.trim() ?? '',
+      ...(formData.is_shared_split
+        ? {} // leave owner/payer/shouldered_by at self/self/self defaults; participants drive the real split
+        : {
+          ...personRefToColumns('owner', owner),
+          ...personRefToColumns('payer', payer),
+          ...personRefToColumns('shouldered_by', shoulderedBy),
+        }),
     })
     .select()
     .single()
   if (error) throw error
 
-  if (formData.assigned_type === 'owe_me' || formData.assigned_type === 'i_owe') {
-    const obligation = await createObligationForContact({
-      direction: formData.assigned_type === 'owe_me' ? 'owed_to_user' : 'user_owes',
-      contactId: formData.contact_id ?? null,
-      contactUserId: formData.contact_user_id ?? null,
-      contactName: formData.contact_name!,
-      contactEmail: formData.contact_email ?? null,
-      // Use the line item's own server-computed converted_amount (PHP),
-      // not a re-derived value, to avoid any rounding drift between the two.
-      amount: item.converted_amount,
-      category: formData.category || 'Others',
-      note: formData.description,
-      sourceLineItemId: item.id,
+  if (!formData.is_shared_split) {
+    const status = deriveLineItemStatus(owner, payer, shoulderedBy)
+    const obligationId = await createOwnershipObligation({
+      expense, lineItemId: item.id, lineItemAmountPhp: item.converted_amount,
+      category: formData.category || 'Others', description: formData.description,
+      status, owner, shoulderedBy,
     })
-    const { error: linkErr } = await supabase
-      .from('expense_line_items')
-      .update({ obligation_id: obligation.id })
-      .eq('id', item.id)
-    if (linkErr) throw linkErr
-    item.obligation_id = obligation.id
+    if (obligationId) {
+      const { error: linkErr } = await supabase
+        .from('expense_line_items')
+        .update({ obligation_id: obligationId })
+        .eq('id', item.id)
+      if (linkErr) throw linkErr
+      item.obligation_id = obligationId
+    }
   }
 
-  if (formData.assigned_type === 'shared' && (formData.participants?.length ?? 0) > 0) {
+  if (formData.is_shared_split && (formData.participants?.length ?? 0) > 0) {
     await createLineItemParticipants({
       expenseId: expense.id,
       lineItemId: item.id,
@@ -293,43 +378,56 @@ export async function updateExpenseLineItem(
   // already has settlement activity (see clearLineItemAssignment).
   await clearLineItemAssignment(lineItem.id)
 
+  const owner = formData.owner ?? SELF
+  const payer = formData.payer ?? SELF
+  const shoulderedBy = formData.shouldered_by ?? SELF
+
+  if (!formData.is_shared_split) {
+    if (owner.kind !== 'self' && !owner.name?.trim()) throw new Error('Owner is required.')
+    if (payer.kind !== 'self' && !payer.name?.trim()) throw new Error('Payer is required.')
+    if (shoulderedBy.kind !== 'self' && !shoulderedBy.name?.trim()) throw new Error('Shouldered By is required.')
+  }
+
   const { data: updated, error } = await supabase
     .from('expense_line_items')
     .update({
       description: formData.description.trim(),
       category: formData.category ?? null,
       original_amount: formData.original_amount,
-      assigned_type: formData.assigned_type,
-      assigned_contact_id: formData.contact_id ?? null,
       notes: formData.notes?.trim() ?? '',
+      ...(formData.is_shared_split
+        ? { owner_kind: 'self', owner_contact_id: null, owner_name: null, owner_email: null,
+            payer_kind: 'self', payer_contact_id: null, payer_name: null, payer_email: null,
+            shouldered_by_kind: 'self', shouldered_by_contact_id: null, shouldered_by_name: null, shouldered_by_email: null }
+        : {
+          ...personRefToColumns('owner', owner),
+          ...personRefToColumns('payer', payer),
+          ...personRefToColumns('shouldered_by', shoulderedBy),
+        }),
     })
     .eq('id', lineItem.id)
     .select()
     .single()
   if (error) throw error
 
-  if (formData.assigned_type === 'owe_me' || formData.assigned_type === 'i_owe') {
-    if (!formData.contact_name?.trim()) throw new Error('Contact is required.')
-    const obligation = await createObligationForContact({
-      direction: formData.assigned_type === 'owe_me' ? 'owed_to_user' : 'user_owes',
-      contactId: formData.contact_id ?? null,
-      contactUserId: formData.contact_user_id ?? null,
-      contactName: formData.contact_name,
-      contactEmail: formData.contact_email ?? null,
-      amount: updated.converted_amount,
-      category: formData.category || 'Others',
-      note: formData.description,
-      sourceLineItemId: updated.id,
+  if (!formData.is_shared_split) {
+    const status = deriveLineItemStatus(owner, payer, shoulderedBy)
+    const obligationId = await createOwnershipObligation({
+      expense, lineItemId: updated.id, lineItemAmountPhp: updated.converted_amount,
+      category: formData.category || 'Others', description: formData.description,
+      status, owner, shoulderedBy,
     })
-    const { error: linkErr } = await supabase
-      .from('expense_line_items')
-      .update({ obligation_id: obligation.id })
-      .eq('id', updated.id)
-    if (linkErr) throw linkErr
-    updated.obligation_id = obligation.id
+    if (obligationId) {
+      const { error: linkErr } = await supabase
+        .from('expense_line_items')
+        .update({ obligation_id: obligationId })
+        .eq('id', updated.id)
+      if (linkErr) throw linkErr
+      updated.obligation_id = obligationId
+    }
   }
 
-  if (formData.assigned_type === 'shared' && (formData.participants?.length ?? 0) > 0) {
+  if (formData.is_shared_split && (formData.participants?.length ?? 0) > 0) {
     await createLineItemParticipants({
       expenseId: expense.id,
       lineItemId: updated.id,

@@ -11,33 +11,41 @@ import {
 import { CategorySelector } from './CategorySelector'
 import {
   getExpenseLineItems, createExpenseLineItem, updateExpenseLineItem,
-  deleteExpenseLineItem, computeAllocation,
+  deleteExpenseLineItem, computeAllocation, deriveLineItemStatus,
 } from '@/services/expenseLineItems'
 import { getContacts } from '@/services/contacts'
 import {
   Contact, Expense, ExpenseLineItem, ExpenseLineItemFormData,
-  ExpenseParticipant, PersonalObligation, LineItemAssignedType,
-  ExpenseParticipantFormData,
+  ExpenseParticipant, PersonalObligation, LineItemDerivedStatus,
+  ExpenseParticipantFormData, PersonRef,
 } from '@/types'
 import { getCurrencySymbol } from '@/lib/constants'
 import { formatCurrency } from '@/utils/format'
 import { cn } from '@/lib/utils'
 import { Plus, Pencil, Trash2, Receipt as ReceiptIcon } from 'lucide-react'
 
-const EXTERNAL_CONTACT_VALUE = '__external__'
+const EXTERNAL_VALUE = '__external__'
+const SELF: PersonRef = { kind: 'self' }
 
-const ASSIGNMENT_LABELS: Record<LineItemAssignedType, string> = {
+const STATUS_LABELS: Record<LineItemDerivedStatus, string> = {
   personal: 'Personal',
-  owe_me: 'Owe Me',
-  i_owe: 'I Owe',
+  receivable: 'Receivable',
+  payable: 'Payable',
+  gift: 'Gift',
   shared: 'Shared',
 }
 
-const ASSIGNMENT_STYLES: Record<LineItemAssignedType, string> = {
+const STATUS_STYLES: Record<LineItemDerivedStatus, string> = {
   personal: 'bg-muted text-muted-foreground',
-  owe_me: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-  i_owe: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  receivable: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  payable: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  gift: 'bg-pink-500/10 text-pink-700 dark:text-pink-400',
   shared: 'bg-primary/10 text-primary',
+}
+
+function personLabel(ref: PersonRef | null | undefined, currentUserLabel = 'Me'): string {
+  if (!ref || ref.kind === 'self') return currentUserLabel
+  return ref.name?.trim() || 'Unnamed'
 }
 
 interface DraftParticipant {
@@ -187,17 +195,27 @@ export function LineItemsSection({ expense, onChanged }: LineItemsSectionProps) 
           {items.map((item) => {
             const obligation = obligationsByItem.get(item.id)
             const participants = participantsByItem.get(item.id) ?? []
+            const isSharedSplit = participants.length > 0
             return (
               <div key={item.id} className="rounded-xl border border-border p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">{item.description}</p>
                     <div className="mt-1 flex items-center gap-2">
-                      <span className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-semibold', ASSIGNMENT_STYLES[item.assigned_type])}>
-                        {ASSIGNMENT_LABELS[item.assigned_type]}
+                      <span className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-semibold', STATUS_STYLES[item.derived_status])}>
+                        {STATUS_LABELS[item.derived_status]}
                       </span>
                       {item.category && <span className="text-xs text-muted-foreground">{item.category}</span>}
                     </div>
+                    {!isSharedSplit && item.derived_status !== 'personal' && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Owner: {personLabel({ kind: item.owner_kind, name: item.owner_name } as PersonRef)}
+                        {item.owner_kind !== item.payer_kind || item.owner_contact_id !== item.payer_contact_id || item.owner_name !== item.payer_name ? (
+                          <> · Payer: {personLabel({ kind: item.payer_kind, name: item.payer_name } as PersonRef)}</>
+                        ) : null}
+                        {' · '}Shouldered by: {personLabel({ kind: item.shouldered_by_kind, name: item.shouldered_by_name } as PersonRef)}
+                      </p>
+                    )}
                     {obligation && (
                       <p className="mt-1 text-xs text-muted-foreground">
                         {obligation.direction === 'owed_to_user'
@@ -205,7 +223,7 @@ export function LineItemsSection({ expense, onChanged }: LineItemsSectionProps) 
                           : `You owe ${obligation.contact_name} ${formatCurrency(obligation.remaining_amount)}`}
                       </p>
                     )}
-                    {participants.length > 0 && (
+                    {isSharedSplit && (
                       <p className="mt-1 text-xs text-muted-foreground">
                         Split {participants.length} ways
                       </p>
@@ -246,6 +264,7 @@ export function LineItemsSection({ expense, onChanged }: LineItemsSectionProps) 
             remaining={editingItem ? allocation.unallocated + editingItem.original_amount : allocation.unallocated}
             contacts={contacts}
             initialData={editingItem ?? undefined}
+            existingParticipants={editingItem ? participantsByItem.get(editingItem.id) ?? [] : []}
             onSubmit={handleSubmit}
             onCancel={() => { setShowForm(false); setEditingItem(null) }}
           />
@@ -255,13 +274,66 @@ export function LineItemsSection({ expense, onChanged }: LineItemsSectionProps) 
   )
 }
 
+// ── Person picker — reused for Owner / Payer / Shouldered By ──────────────────
+function PersonPicker({
+  label, value, onChange, contacts,
+}: {
+  label: string
+  value: PersonRef
+  onChange: (ref: PersonRef) => void
+  contacts: Contact[]
+}) {
+  const selectValue = value.kind === 'self' ? 'self' : value.kind === 'external' ? EXTERNAL_VALUE : (value.contact_id ?? '')
+
+  const handleSelect = (v: string) => {
+    if (v === 'self') { onChange(SELF); return }
+    if (v === EXTERNAL_VALUE) { onChange({ kind: 'external', name: '', email: '' }); return }
+    const contact = contacts.find((c) => c.id === v)
+    if (!contact) return
+    onChange({ kind: 'contact', contact_id: contact.id, name: contact.name, email: contact.email ?? '' })
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-semibold text-muted-foreground">{label}</Label>
+      <select
+        aria-label={label}
+        value={selectValue}
+        onChange={(e) => handleSelect(e.target.value)}
+        className="w-full h-10 rounded-xl border border-input bg-background px-3 text-sm"
+      >
+        <option value="self">Me</option>
+        {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        <option value={EXTERNAL_VALUE}>External person</option>
+      </select>
+      {value.kind === 'external' && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Input
+            placeholder="Name"
+            value={value.name ?? ''}
+            onChange={(e) => onChange({ ...value, name: e.target.value })}
+            className="h-9 rounded-xl text-sm"
+          />
+          <Input
+            placeholder="Email (optional)"
+            value={value.email ?? ''}
+            onChange={(e) => onChange({ ...value, email: e.target.value })}
+            className="h-9 rounded-xl text-sm"
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function LineItemForm({
-  currencySymbol, remaining, contacts, initialData, onSubmit, onCancel,
+  currencySymbol, remaining, contacts, initialData, existingParticipants, onSubmit, onCancel,
 }: {
   currencySymbol: string
   remaining: number
   contacts: Contact[]
   initialData?: ExpenseLineItem
+  existingParticipants: ExpenseParticipant[]
   onSubmit: (data: ExpenseLineItemFormData) => Promise<void>
   onCancel: () => void
 }) {
@@ -269,33 +341,51 @@ function LineItemForm({
   const [category, setCategory] = useState(initialData?.category ?? 'Food')
   const [amount, setAmount] = useState(initialData?.original_amount?.toString() ?? '')
   const [notes, setNotes] = useState(initialData?.notes ?? '')
-  const [assignedType, setAssignedType] = useState<LineItemAssignedType>(initialData?.assigned_type ?? 'personal')
-  const [contactId, setContactId] = useState('')
-  const [externalName, setExternalName] = useState('')
-  const [externalEmail, setExternalEmail] = useState('')
-  const [participants, setParticipants] = useState<DraftParticipant[]>([])
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSharedSplit, setIsSharedSplit] = useState(existingParticipants.length > 0)
 
-  const needsContact = assignedType === 'owe_me' || assignedType === 'i_owe'
-  const isExternal = contactId === EXTERNAL_CONTACT_VALUE
-  const selectedContact = isExternal ? null : contacts.find((c) => c.id === contactId) ?? null
-  const contactName = isExternal ? externalName.trim() : selectedContact?.name ?? ''
-  const contactEmail = isExternal ? externalEmail.trim() || null : selectedContact?.email ?? null
-  const contactUserId = isExternal ? null : selectedContact?.linked_user_id ?? null
+  const [owner, setOwner] = useState<PersonRef>(
+    initialData ? { kind: initialData.owner_kind, contact_id: initialData.owner_contact_id, name: initialData.owner_name, email: initialData.owner_email } : SELF
+  )
+  const [payer, setPayer] = useState<PersonRef>(
+    initialData ? { kind: initialData.payer_kind, contact_id: initialData.payer_contact_id, name: initialData.payer_name, email: initialData.payer_email } : SELF
+  )
+  const [shoulderedBy, setShoulderedBy] = useState<PersonRef>(
+    initialData ? { kind: initialData.shouldered_by_kind, contact_id: initialData.shouldered_by_contact_id, name: initialData.shouldered_by_name, email: initialData.shouldered_by_email } : SELF
+  )
+
+  const [participants, setParticipants] = useState<DraftParticipant[]>(
+    existingParticipants.map((p) => newDraftParticipant({
+      participant_kind: p.participant_kind,
+      contact_id: p.contact_id ?? '',
+      participant_name: p.participant_name,
+      participant_email: p.participant_email ?? '',
+      share_amount: String(p.share_amount),
+      is_payer: p.is_payer,
+    }))
+  )
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const amt = parseFloat(amount) || 0
   const participantTotal = participants.reduce((s, p) => s + (parseFloat(p.share_amount) || 0), 0)
-  const participantsValid = assignedType !== 'shared' || (
+  const participantsValid = !isSharedSplit || (
     participants.length >= 2
     && participants.some((p) => p.is_payer)
     && participants.every((p) => p.participant_name.trim() && parseFloat(p.share_amount) >= 0)
     && Math.abs(participantTotal - amt) < 0.01
   )
 
+  const ownershipValid = isSharedSplit || (
+    (owner.kind !== 'external' || owner.name?.trim())
+    && (payer.kind !== 'external' || payer.name?.trim())
+    && (shoulderedBy.kind !== 'external' || shoulderedBy.name?.trim())
+  )
+
+  const previewStatus = isSharedSplit ? null : deriveLineItemStatus(owner, payer, shoulderedBy)
+
   const canSubmit = !!description.trim()
     && amt > 0
     && amt <= remaining + 0.01
-    && (!needsContact || !!contactName)
+    && ownershipValid
     && participantsValid
 
   const addParticipantRow = () => {
@@ -347,14 +437,11 @@ function LineItemForm({
         description: description.trim(),
         category,
         original_amount: amt,
-        assigned_type: assignedType,
         notes: notes.trim(),
-        contact_id: needsContact ? (isExternal ? null : selectedContact?.id ?? null) : undefined,
-        contact_user_id: needsContact ? contactUserId : undefined,
-        contact_name: needsContact ? contactName : undefined,
-        contact_email: needsContact ? contactEmail : undefined,
+        is_shared_split: isSharedSplit,
+        owner, payer, shouldered_by: shoulderedBy,
         split_mode: 'custom',
-        participants: assignedType === 'shared' ? participantPayload : undefined,
+        participants: isSharedSplit ? participantPayload : undefined,
       })
     } finally {
       setIsSubmitting(false)
@@ -398,48 +485,44 @@ function LineItemForm({
       </div>
 
       <div className="space-y-2">
-        <Label className="text-sm font-semibold">Assignment</Label>
-        <div className="grid grid-cols-4 gap-2">
-          {(Object.keys(ASSIGNMENT_LABELS) as LineItemAssignedType[]).map((type) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => setAssignedType(type)}
-              className={cn(
-                'h-10 rounded-xl border text-xs font-semibold transition-colors',
-                assignedType === type ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground hover:bg-accent'
-              )}
-            >
-              {ASSIGNMENT_LABELS[type]}
-            </button>
-          ))}
+        <div className="flex items-center justify-between">
+          <Label className="text-sm font-semibold">Split among multiple people?</Label>
+          <button
+            type="button"
+            onClick={() => setIsSharedSplit((v) => !v)}
+            className={cn(
+              'h-8 px-3 rounded-full text-xs font-semibold border transition-colors',
+              isSharedSplit ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground hover:bg-accent'
+            )}
+          >
+            {isSharedSplit ? 'Yes' : 'No'}
+          </button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          {isSharedSplit
+            ? 'Split this item\'s cost among several people (equal or custom shares).'
+            : 'Describe who owns, who pays, and who fronted the money — the system figures out the rest.'}
+        </p>
       </div>
 
-      {needsContact && (
-        <div className="space-y-2">
-          <Label className="text-sm font-semibold">{assignedType === 'i_owe' ? 'Paid By' : 'Contact'}</Label>
-          <select
-            value={contactId}
-            onChange={(e) => setContactId(e.target.value)}
-            className="w-full h-11 rounded-xl border border-input bg-background px-3 text-sm"
-          >
-            <option value="">Select a contact</option>
-            {contacts.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}{c.email ? ` · ${c.email}` : ''}</option>
-            ))}
-            <option value={EXTERNAL_CONTACT_VALUE}>External person</option>
-          </select>
-          {isExternal && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Input placeholder="Name" value={externalName} onChange={(e) => setExternalName(e.target.value)} className="h-10 rounded-xl" />
-              <Input placeholder="Email" value={externalEmail} onChange={(e) => setExternalEmail(e.target.value)} className="h-10 rounded-xl" />
+      {!isSharedSplit && (
+        <div className="space-y-3 rounded-xl border border-border p-3">
+          <PersonPicker label="Owner — who ultimately owns/uses this item" value={owner} onChange={setOwner} contacts={contacts} />
+          <PersonPicker label="Payer — who is responsible for paying" value={payer} onChange={setPayer} contacts={contacts} />
+          <PersonPicker label="Shouldered By — who initially fronted the money" value={shoulderedBy} onChange={setShoulderedBy} contacts={contacts} />
+          {previewStatus && (
+            <div className={cn('rounded-lg px-3 py-2 text-xs font-semibold', STATUS_STYLES[previewStatus])}>
+              Result: {STATUS_LABELS[previewStatus]}
+              {previewStatus === 'payable' && ` — you owe ${personLabel(shoulderedBy)}`}
+              {previewStatus === 'receivable' && ` — ${personLabel(owner)} owes you`}
+              {previewStatus === 'gift' && ` — a gift to ${personLabel(owner)}, no debt tracked`}
+              {previewStatus === 'shared' && ' — three different parties; not auto-tracked as your obligation'}
             </div>
           )}
         </div>
       )}
 
-      {assignedType === 'shared' && (
+      {isSharedSplit && (
         <div className="space-y-3 rounded-xl border border-border p-3">
           <div className="flex items-center justify-between">
             <Label className="text-sm font-semibold">Split among</Label>

@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import { IncomeEntry } from '@/types'
 import { useIncomeSources } from '@/hooks/useIncomeSources'
 import { useIncomeEntries } from '@/hooks/useIncomeEntries'
+import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { IncomeEntryItem } from '@/components/income/IncomeEntryItem'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,43 +13,234 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { BottomSheet } from '@/components/common/BottomSheet'
+import { FilterCheckboxGroup } from '@/components/common/FilterCheckboxGroup'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { PRESET_COLORS, PRESET_EMOJIS_INCOME } from '@/lib/constants'
+import { PRESET_COLORS, PRESET_EMOJIS_INCOME, isLiabilityType } from '@/lib/constants'
 import { AccountSelector } from '@/components/accounts/AccountSelector'
 import { formatCurrency, getMonthName } from '@/utils/format'
 import { cn } from '@/lib/utils'
-import { Plus } from 'lucide-react'
+import { Plus, SlidersHorizontal } from 'lucide-react'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
   value: String(i + 1),
   label: getMonthName(i + 1),
 }))
 const YEARS = ['2024', '2025', '2026']
-const DAYS  = Array.from({ length: 31 }, (_, i) => String(i + 1))
+
+// ── Date filter: Preset Range / Custom Range / Month-Year — mutually exclusive ──
+type DatePresetKey = 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'this_year' | 'last_year'
+type DateFilterMode = 'none' | 'preset' | 'custom' | 'monthYear'
+
+interface DateFilterState {
+  mode: DateFilterMode
+  preset: DatePresetKey | null
+  customFrom: string
+  customTo: string
+  month: string
+  year: string
+}
+
+function emptyDateFilter(): DateFilterState {
+  return { mode: 'none', preset: null, customFrom: '', customTo: '', month: 'all', year: 'all' }
+}
+
+function defaultDateFilter(): DateFilterState {
+  const now = new Date()
+  return { mode: 'monthYear', preset: null, customFrom: '', customTo: '', month: String(now.getMonth() + 1), year: String(now.getFullYear()) }
+}
+
+const DATE_PRESET_OPTIONS: Array<{ value: DatePresetKey; label: string }> = [
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'this_week', label: 'This Week' },
+  { value: 'last_week', label: 'Last Week' },
+  { value: 'this_month', label: 'This Month' },
+  { value: 'last_month', label: 'Last Month' },
+  { value: 'this_year', label: 'This Year' },
+  { value: 'last_year', label: 'Last Year' },
+]
+
+function startOfDay(d: Date) { return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0) }
+function endOfDay(d: Date) { return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999) }
+
+function computePresetRange(preset: DatePresetKey): { start: Date; end: Date } {
+  const now = new Date()
+  switch (preset) {
+    case 'today':
+      return { start: startOfDay(now), end: endOfDay(now) }
+    case 'yesterday': {
+      const d = new Date(now); d.setDate(d.getDate() - 1)
+      return { start: startOfDay(d), end: endOfDay(d) }
+    }
+    case 'this_week': {
+      const start = new Date(now); start.setDate(now.getDate() - now.getDay())
+      return { start: startOfDay(start), end: endOfDay(now) }
+    }
+    case 'last_week': {
+      const thisWeekStart = new Date(now); thisWeekStart.setDate(now.getDate() - now.getDay())
+      const start = new Date(thisWeekStart); start.setDate(thisWeekStart.getDate() - 7)
+      const end = new Date(thisWeekStart); end.setDate(thisWeekStart.getDate() - 1)
+      return { start: startOfDay(start), end: endOfDay(end) }
+    }
+    case 'this_month':
+      return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: endOfDay(now) }
+    case 'last_month': {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+      return { start, end }
+    }
+    case 'this_year':
+      return { start: new Date(now.getFullYear(), 0, 1), end: endOfDay(now) }
+    case 'last_year':
+      return { start: new Date(now.getFullYear() - 1, 0, 1), end: new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999) }
+  }
+}
+
+function dateFilterLabel(filter: DateFilterState): string {
+  if (filter.mode === 'preset' && filter.preset) {
+    return DATE_PRESET_OPTIONS.find((o) => o.value === filter.preset)?.label ?? 'Custom'
+  }
+  if (filter.mode === 'custom') {
+    if (filter.customFrom && filter.customTo) return `${filter.customFrom} – ${filter.customTo}`
+    if (filter.customFrom) return `From ${filter.customFrom}`
+    if (filter.customTo) return `Until ${filter.customTo}`
+    return 'Custom Range'
+  }
+  if (filter.mode === 'monthYear') {
+    const monthLabel = filter.month === 'all' ? 'All months' : getMonthName(Number(filter.month))
+    const yearLabel = filter.year === 'all' ? '' : ` ${filter.year}`
+    return `${monthLabel}${yearLabel}`
+  }
+  return 'All time'
+}
+
+function matchesDateFilter(receivedAt: string, filter: DateFilterState): boolean {
+  const t = new Date(receivedAt).getTime()
+  if (filter.mode === 'preset' && filter.preset) {
+    const { start, end } = computePresetRange(filter.preset)
+    return t >= start.getTime() && t <= end.getTime()
+  }
+  if (filter.mode === 'custom') {
+    if (filter.customFrom && t < new Date(filter.customFrom + 'T00:00:00').getTime()) return false
+    if (filter.customTo && t > new Date(filter.customTo + 'T23:59:59.999').getTime()) return false
+    return true
+  }
+  if (filter.mode === 'monthYear') {
+    const d = new Date(receivedAt)
+    if (filter.month !== 'all' && d.getMonth() + 1 !== Number(filter.month)) return false
+    if (filter.year !== 'all' && d.getFullYear() !== Number(filter.year)) return false
+    return true
+  }
+  return true
+}
+
+interface IncomeFilters {
+  sources: string[]
+  accounts: string[]
+  accountTypes: string[]
+  incomeTypes: string[]
+}
+
+const EMPTY_INCOME_FILTERS: IncomeFilters = {
+  sources: [],
+  accounts: [],
+  accountTypes: [],
+  incomeTypes: [],
+}
+
+function countActiveIncomeFilters(filters: IncomeFilters): number {
+  return Object.values(filters).reduce((sum, arr) => sum + arr.length, 0)
+}
+
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: 'asset', label: '💰 Assets' },
+  { value: 'liability', label: '💳 Liabilities' },
+] as const
+
+const INCOME_TYPE_OPTIONS = [
+  { value: 'received', label: '✓ Received' },
+  { value: 'expected', label: '⏳ Expected' },
+] as const
 
 export default function IncomePage() {
   const now = new Date()
-  const [month, setMonth] = useState(String(now.getMonth() + 1))
-  const [year, setYear]   = useState(String(now.getFullYear()))
-  const [day,   setDay]   = useState('all')
-  const [sourceFilter, setSourceFilter] = useState('all')
   const [showAdd, setShowAdd]           = useState(false)
   const [showAddSource, setShowAddSource] = useState(false)
   const isMobile = useIsMobile()
 
-  const [statusFilter, setStatusFilter] = useState<'all' | 'expected' | 'received'>('all')
+  // ── Multi-select checkbox + date filters (deferred apply, mirrors Expenses) ──
+  const [appliedFilters, setAppliedFilters] = useState<IncomeFilters>(EMPTY_INCOME_FILTERS)
+  const [draftFilters, setDraftFilters]     = useState<IncomeFilters>(EMPTY_INCOME_FILTERS)
+  const [appliedDateFilter, setAppliedDateFilter] = useState<DateFilterState>(defaultDateFilter)
+  const [draftDateFilter, setDraftDateFilter]     = useState<DateFilterState>(defaultDateFilter)
+  const [showFilters, setShowFilters]       = useState(false)
 
   const { sources, addSource, removeSource } = useIncomeSources()
-  const { entries, isLoading, addEntry, editEntry, removeEntry, markReceived } = useIncomeEntries(
-    month === 'all' ? undefined : Number(month),
-    year  === 'all' ? undefined : Number(year)
-  )
+  const { accounts } = useFinancialAccounts()
+  // Flexible date filtering (presets/custom range/month-year) needs the full
+  // history fetched once and filtered client-side — a single month/year pair
+  // can no longer drive a server-side query.
+  const { entries, isLoading, addEntry, editEntry, removeEntry, markReceived } = useIncomeEntries()
 
   const sourceMap = useMemo(() => new Map(sources.map((s) => [s.id, s])), [sources])
+  const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
+
+  const openFilters = () => {
+    setDraftFilters(appliedFilters)
+    setDraftDateFilter(appliedDateFilter)
+    setShowFilters(true)
+  }
+
+  const toggleDraftValue = (key: keyof IncomeFilters, value: string) => {
+    setDraftFilters((prev) => {
+      const current = prev[key]
+      const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value]
+      return { ...prev, [key]: next }
+    })
+  }
+
+  const selectDatePreset = (preset: DatePresetKey) => {
+    setDraftDateFilter({ mode: 'preset', preset, customFrom: '', customTo: '', month: 'all', year: 'all' })
+  }
+  const setDraftCustomFrom = (value: string) => {
+    setDraftDateFilter((prev) => ({ ...prev, mode: 'custom', preset: null, month: 'all', year: 'all', customFrom: value }))
+  }
+  const setDraftCustomTo = (value: string) => {
+    setDraftDateFilter((prev) => ({ ...prev, mode: 'custom', preset: null, month: 'all', year: 'all', customTo: value }))
+  }
+  const setDraftMonth = (value: string) => {
+    setDraftDateFilter((prev) => ({ ...prev, mode: 'monthYear', preset: null, customFrom: '', customTo: '', month: value }))
+  }
+  const setDraftYear = (value: string) => {
+    setDraftDateFilter((prev) => ({ ...prev, mode: 'monthYear', preset: null, customFrom: '', customTo: '', year: value }))
+  }
+  const clearDraftDateFilter = () => setDraftDateFilter(emptyDateFilter())
+
+  const handleApplyFilters = () => {
+    setAppliedFilters(draftFilters)
+    setAppliedDateFilter(draftDateFilter)
+    setShowFilters(false)
+  }
+
+  // "Clear All" clears the checkbox groups only — date filter is a separate concern.
+  const handleClearDraftFilters = () => {
+    setDraftFilters(EMPTY_INCOME_FILTERS)
+  }
+
+  // "Reset" clears everything in the draft, including the date filter.
+  const handleResetDraftFilters = () => {
+    setDraftFilters(EMPTY_INCOME_FILTERS)
+    setDraftDateFilter(emptyDateFilter())
+  }
+
+  const activeFilterCount = useMemo(() =>
+    countActiveIncomeFilters(appliedFilters) + (appliedDateFilter.mode !== 'none' ? 1 : 0),
+    [appliedFilters, appliedDateFilter]
+  )
 
   // ── Add entry form state ─────────────────────────────────────
   const [entrySourceId, setEntrySourceId] = useState('')
@@ -75,12 +267,24 @@ export default function IncomePage() {
   // ── Stats ─────────────────────────────────────────────────────
   const filtered = useMemo(() =>
     entries.filter((e) => {
-      if (sourceFilter !== 'all' && e.income_source_id !== sourceFilter) return false
-      if (day !== 'all' && new Date(e.received_at).getDate() !== Number(day)) return false
-      if (statusFilter !== 'all' && e.status !== statusFilter) return false
-      return true
+      const matchesDate = matchesDateFilter(e.received_at, appliedDateFilter)
+
+      const account = e.account_id ? accountMap.get(e.account_id) : null
+
+      // Each group: empty selection = no filter applied (OR within the group).
+      const matchesSource = appliedFilters.sources.length === 0
+        || appliedFilters.sources.includes(e.income_source_id)
+      const matchesAccount = appliedFilters.accounts.length === 0
+        || appliedFilters.accounts.includes(e.account_id ?? '')
+      const matchesAccountType = appliedFilters.accountTypes.length === 0
+        || (!!account && appliedFilters.accountTypes.includes(isLiabilityType(account.type) ? 'liability' : 'asset'))
+      const matchesIncomeType = appliedFilters.incomeTypes.length === 0
+        || appliedFilters.incomeTypes.includes(e.status)
+
+      // AND across groups.
+      return matchesDate && matchesSource && matchesAccount && matchesAccountType && matchesIncomeType
     }),
-    [entries, sourceFilter, day, statusFilter]
+    [entries, appliedDateFilter, appliedFilters, accountMap]
   )
   const totalReceived  = useMemo(() => filtered.filter((e) => e.status === 'received').reduce((s, e) => s + e.amount, 0), [filtered])
   const totalExpected  = useMemo(() => filtered.filter((e) => e.status === 'expected').reduce((s, e) => s + e.amount, 0), [filtered])
@@ -266,11 +470,7 @@ export default function IncomePage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold">Income</h1>
-          <p className="text-sm text-muted-foreground">
-            {day !== 'all' ? `Day ${day} · ` : ''}
-            {month === 'all' ? 'All months' : getMonthName(Number(month))}
-            {year !== 'all' ? ` ${year}` : ''}
-          </p>
+          <p className="text-sm text-muted-foreground">{dateFilterLabel(appliedDateFilter)}</p>
         </div>
         <Button type="button" onClick={() => setShowAdd(true)} className="h-9 rounded-xl text-sm gap-1.5">
           <Plus className="w-4 h-4" />
@@ -280,61 +480,22 @@ export default function IncomePage() {
 
       {/* Filters */}
       <div className="space-y-2">
-        <div className="flex gap-2">
-          <Select value={day} onValueChange={(v: string | null) => setDay(v || 'all')}>
-            <SelectTrigger className="h-10 rounded-xl w-[72px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All days</SelectItem>
-              {DAYS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={month} onValueChange={(v: string | null) => v && setMonth(v)}>
-            <SelectTrigger className="h-10 rounded-xl flex-1 min-w-0"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All months</SelectItem>
-              {MONTHS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={year} onValueChange={(v: string | null) => v && setYear(v)}>
-            <SelectTrigger className="h-10 rounded-xl w-24"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All years</SelectItem>
-              {YEARS.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <Select value={sourceFilter} onValueChange={(v: string | null) => setSourceFilter(v || 'all')}>
-          <SelectTrigger className="h-10 rounded-xl w-full">
-            <SelectValue placeholder="All sources" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All sources</SelectItem>
-            {sources.map((s) => (
-              <SelectItem key={s.id} value={s.id}>{s.emoji} {s.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <div className="flex gap-2">
-          {(['all', 'received', 'expected'] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setStatusFilter(s)}
-              className={cn(
-                'flex-1 h-9 rounded-xl text-xs font-semibold border transition-colors',
-                statusFilter === s
-                  ? s === 'expected'
-                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400'
-                    : s === 'received'
-                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
-                    : 'bg-primary/10 border-primary/30 text-primary'
-                  : 'bg-card border-border text-muted-foreground hover:bg-accent'
-              )}
-            >
-              {s === 'all' ? 'All' : s === 'received' ? '✓ Received' : '⏳ Expected'}
-            </button>
-          ))}
-        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-10 rounded-xl w-full justify-between"
+          onClick={openFilters}
+        >
+          <span className="flex items-center gap-2">
+            <SlidersHorizontal className="w-4 h-4" />
+            Filters
+          </span>
+          {activeFilterCount > 0 && (
+            <span className="rounded-full bg-primary/10 text-primary text-xs font-semibold px-2 py-0.5">
+              {activeFilterCount}
+            </span>
+          )}
+        </Button>
       </div>
 
       {/* Stats */}
@@ -599,6 +760,182 @@ export default function IncomePage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {isMobile ? (
+        <BottomSheet open={showFilters} onClose={() => setShowFilters(false)} title="Filters">
+          <IncomeFilterPanel
+            draftFilters={draftFilters}
+            toggleDraftValue={toggleDraftValue}
+            draftDateFilter={draftDateFilter}
+            onSelectPreset={selectDatePreset}
+            onCustomFrom={setDraftCustomFrom}
+            onCustomTo={setDraftCustomTo}
+            onMonth={setDraftMonth}
+            onYear={setDraftYear}
+            onClearDate={clearDraftDateFilter}
+            onApply={handleApplyFilters}
+            onClearAll={handleClearDraftFilters}
+            onReset={handleResetDraftFilters}
+            sources={sources}
+            accounts={accounts}
+          />
+        </BottomSheet>
+      ) : (
+        <Dialog open={showFilters} onOpenChange={setShowFilters}>
+          <DialogContent className="sm:max-w-md rounded-2xl max-h-[85vh] overflow-y-auto">
+            <h2 className="text-lg font-bold">Filters</h2>
+            <IncomeFilterPanel
+              draftFilters={draftFilters}
+              toggleDraftValue={toggleDraftValue}
+              draftDateFilter={draftDateFilter}
+              onSelectPreset={selectDatePreset}
+              onCustomFrom={setDraftCustomFrom}
+              onCustomTo={setDraftCustomTo}
+              onMonth={setDraftMonth}
+              onYear={setDraftYear}
+              onClearDate={clearDraftDateFilter}
+              onApply={handleApplyFilters}
+              onClearAll={handleClearDraftFilters}
+              onReset={handleResetDraftFilters}
+              sources={sources}
+              accounts={accounts}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  )
+}
+
+function IncomeFilterPanel({
+  draftFilters, toggleDraftValue, draftDateFilter,
+  onSelectPreset, onCustomFrom, onCustomTo, onMonth, onYear, onClearDate,
+  onApply, onClearAll, onReset, sources, accounts,
+}: {
+  draftFilters: IncomeFilters
+  toggleDraftValue: (key: keyof IncomeFilters, value: string) => void
+  draftDateFilter: DateFilterState
+  onSelectPreset: (preset: DatePresetKey) => void
+  onCustomFrom: (value: string) => void
+  onCustomTo: (value: string) => void
+  onMonth: (value: string) => void
+  onYear: (value: string) => void
+  onClearDate: () => void
+  onApply: () => void
+  onClearAll: () => void
+  onReset: () => void
+  sources: Array<{ id: string; emoji: string; name: string }>
+  accounts: Array<{ id: string; emoji: string; name: string }>
+}) {
+  const draftCount = countActiveIncomeFilters(draftFilters) + (draftDateFilter.mode !== 'none' ? 1 : 0)
+
+  return (
+    <div className="space-y-5 py-2">
+      {/* Date Range — Preset / Custom / Month-Year are mutually exclusive */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Date Range</p>
+          {draftDateFilter.mode !== 'none' && (
+            <button type="button" onClick={onClearDate} className="text-xs text-primary hover:underline">
+              Clear
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {DATE_PRESET_OPTIONS.map((opt) => {
+            const active = draftDateFilter.mode === 'preset' && draftDateFilter.preset === opt.value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => onSelectPreset(opt.value)}
+                className={cn(
+                  'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
+                  active ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground hover:bg-accent'
+                )}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">From</Label>
+            <Input
+              type="date"
+              value={draftDateFilter.customFrom}
+              onChange={(e) => onCustomFrom(e.target.value)}
+              className="h-10 rounded-xl text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">To</Label>
+            <Input
+              type="date"
+              value={draftDateFilter.customTo}
+              onChange={(e) => onCustomTo(e.target.value)}
+              className="h-10 rounded-xl text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Select value={draftDateFilter.month} onValueChange={(v: string | null) => v && onMonth(v)}>
+            <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All months</SelectItem>
+              {MONTHS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={draftDateFilter.year} onValueChange={(v: string | null) => v && onYear(v)}>
+            <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All years</SelectItem>
+              {YEARS.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <FilterCheckboxGroup
+        title="Income Source"
+        options={sources.map((s) => ({ value: s.id, label: `${s.emoji} ${s.name}` }))}
+        selected={draftFilters.sources}
+        onToggle={(v) => toggleDraftValue('sources', v)}
+      />
+      <FilterCheckboxGroup
+        title="Source Account"
+        options={accounts.map((a) => ({ value: a.id, label: `${a.emoji} ${a.name}` }))}
+        selected={draftFilters.accounts}
+        onToggle={(v) => toggleDraftValue('accounts', v)}
+      />
+      <FilterCheckboxGroup
+        title="Source Account Type"
+        options={ACCOUNT_TYPE_OPTIONS}
+        selected={draftFilters.accountTypes}
+        onToggle={(v) => toggleDraftValue('accountTypes', v)}
+      />
+      <FilterCheckboxGroup
+        title="Income Type"
+        options={INCOME_TYPE_OPTIONS}
+        selected={draftFilters.incomeTypes}
+        onToggle={(v) => toggleDraftValue('incomeTypes', v)}
+      />
+
+      <div className="flex gap-2 pt-2 sticky bottom-0 bg-background pb-1">
+        <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={onClearAll}>
+          Clear All
+        </Button>
+        <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl" onClick={onReset}>
+          Reset
+        </Button>
+        <Button type="button" className="flex-1 h-11 rounded-xl font-semibold" onClick={onApply}>
+          Apply{draftCount > 0 ? ` (${draftCount})` : ''}
+        </Button>
+      </div>
     </div>
   )
 }

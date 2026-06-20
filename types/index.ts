@@ -395,7 +395,21 @@ export interface ExpenseDetailsData {
   participants: ExpenseParticipant[]
 }
 
+/** @deprecated superseded by derived_status, computed from owner/payer/shouldered_by. Kept for legacy rows. */
 export type LineItemAssignedType = 'personal' | 'owe_me' | 'i_owe' | 'shared'
+
+/** Auto-derived from comparing owner/payer/shouldered_by — see migration_063. */
+export type LineItemDerivedStatus = 'personal' | 'receivable' | 'payable' | 'gift' | 'shared'
+
+export type PersonRefKind = 'self' | 'contact' | 'external'
+
+/** A reference to a person in one of the three ownership roles (owner/payer/shouldered_by). */
+export interface PersonRef {
+  kind: PersonRefKind
+  contact_id?: string | null
+  name?: string | null
+  email?: string | null
+}
 
 export interface ExpenseLineItem {
   id: string
@@ -413,9 +427,33 @@ export interface ExpenseLineItem {
   base_currency: string
   /** Defaults from the parent expense's exchange_rate_used. */
   exchange_rate_used: number
+  /** @deprecated superseded by derived_status. */
   assigned_type: LineItemAssignedType
+  /** @deprecated superseded by owner/payer/shouldered_by contact ids. */
   assigned_contact_id: string | null
-  /** Set for owe_me/i_owe line items — the generated personal_obligations row. */
+
+  // Owner: who ultimately owns/uses/consumes the item.
+  owner_kind: PersonRefKind
+  owner_contact_id: string | null
+  owner_name: string | null
+  owner_email: string | null
+
+  // Payer: who is responsible for paying for the item.
+  payer_kind: PersonRefKind
+  payer_contact_id: string | null
+  payer_name: string | null
+  payer_email: string | null
+
+  // Shouldered by: who initially fronted the money for the item.
+  shouldered_by_kind: PersonRefKind
+  shouldered_by_contact_id: string | null
+  shouldered_by_name: string | null
+  shouldered_by_email: string | null
+
+  /** Server-computed from owner/payer/shouldered_by — see migration_063. */
+  derived_status: LineItemDerivedStatus
+
+  /** Set for receivable/payable line items — the generated personal_obligations row. */
   obligation_id: string | null
   notes: string
   created_at: string
@@ -427,14 +465,15 @@ export interface ExpenseLineItemFormData {
   category?: string | null
   /** Native-currency amount as entered, e.g. 2000 for ¥2,000. */
   original_amount: number
-  assigned_type: LineItemAssignedType
   notes?: string
-  // owe_me / i_owe
-  contact_id?: string | null
-  contact_user_id?: string | null
-  contact_name?: string
-  contact_email?: string | null
-  // shared
+
+  /** When true, ignore owner/payer/shouldered_by and use the participants split below instead. */
+  is_shared_split: boolean
+  owner?: PersonRef
+  payer?: PersonRef
+  shouldered_by?: PersonRef
+
+  // Used only when is_shared_split is true.
   split_mode?: ExpenseSplitMode
   participants?: ExpenseParticipantFormData[]
 }

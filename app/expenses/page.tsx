@@ -24,6 +24,7 @@ import { Expense } from '@/types'
 import { Search, X, Download, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { BottomSheet } from '@/components/common/BottomSheet'
+import { FilterCheckboxGroup } from '@/components/common/FilterCheckboxGroup'
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
   value: String(i + 1),
@@ -735,43 +736,6 @@ export default function ExpensesPage() {
           </DialogContent>
         </Dialog>
       )}
-    </div>
-  )
-}
-
-function FilterCheckboxGroup({
-  title, options, selected, onToggle,
-}: {
-  title: string
-  options: ReadonlyArray<{ value: string; label: string }>
-  selected: string[]
-  onToggle: (value: string) => void
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
-      <div className="space-y-1.5">
-        {options.map((opt) => {
-          const checked = selected.includes(opt.value)
-          return (
-            <label
-              key={opt.value}
-              className={cn(
-                'flex items-center gap-2.5 rounded-xl border px-3 py-2 text-sm cursor-pointer transition-colors',
-                checked ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent'
-              )}
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => onToggle(opt.value)}
-                className="h-4 w-4 rounded accent-primary"
-              />
-              {opt.label}
-            </label>
-          )
-        })}
-      </div>
     </div>
   )
 }

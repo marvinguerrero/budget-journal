@@ -1,8 +1,21 @@
 import * as XLSX from 'xlsx'
 import { createClient } from '@/lib/supabase/client'
-import { Expense, FinancialAccount } from '@/types'
+import { Expense, FinancialAccount, ExpenseLineItem, PersonRefKind } from '@/types'
 import { ACCOUNT_TYPES } from '@/lib/constants'
 import { getMonthName } from '@/utils/format'
+
+const STATUS_EXPORT_LABELS: Record<string, string> = {
+  personal: 'Personal',
+  receivable: 'Receivable',
+  payable: 'Payable',
+  gift: 'Gift',
+  shared: 'Shared',
+}
+
+function personExportLabel(kind: PersonRefKind, name: string | null): string {
+  if (kind === 'self') return 'Me'
+  return name?.trim() || ''
+}
 
 interface ExportOptions {
   month?: number
@@ -78,6 +91,19 @@ async function fetchExportLookups(expenses: Expense[]) {
   return { groupNameById, budgetByKey }
 }
 
+/** Fetches line items for every exported expense, for the "Line Items" sheet. */
+async function fetchLineItemsForExport(expenseIds: string[]): Promise<ExpenseLineItem[]> {
+  if (expenseIds.length === 0) return []
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('expense_line_items')
+    .select('*')
+    .in('expense_id', expenseIds)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data ?? []
+}
+
 export async function exportExpensesToExcel(
   expenses: Expense[],
   accounts: FinancialAccount[],
@@ -87,6 +113,8 @@ export async function exportExpensesToExcel(
 
   const accountById = new Map(accounts.map((a) => [a.id, a]))
   const { groupNameById, budgetByKey } = await fetchExportLookups(expenses)
+  const lineItems = await fetchLineItemsForExport(expenses.map((e) => e.id))
+  const expenseById = new Map(expenses.map((e) => [e.id, e]))
 
   const rows = expenses.map((e, index) => {
     const date = new Date(e.created_at)
@@ -208,6 +236,36 @@ export async function exportExpensesToExcel(
 
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Expenses')
+
+  if (lineItems.length > 0) {
+    const lineItemRows = lineItems.map((li, index) => {
+      const parent = expenseById.get(li.expense_id)
+      return {
+        'No.': index + 1,
+        'Parent Expense ID': li.expense_id,
+        'Parent Description': parent?.note || parent?.category || '',
+        'Item Name': li.description,
+        Category: li.category ?? '',
+        'Original Amount': li.original_amount,
+        'Original Currency': li.original_currency,
+        'Converted Amount': li.converted_amount,
+        'Base Currency': li.base_currency,
+        'Exchange Rate Used': li.exchange_rate_used,
+        Owner: personExportLabel(li.owner_kind, li.owner_name),
+        Payer: personExportLabel(li.payer_kind, li.payer_name),
+        'Shouldered By': personExportLabel(li.shouldered_by_kind, li.shouldered_by_name),
+        'Derived Status': STATUS_EXPORT_LABELS[li.derived_status] ?? li.derived_status,
+        Notes: li.notes,
+      }
+    })
+
+    const lineItemsWs = XLSX.utils.json_to_sheet(lineItemRows)
+    lineItemsWs['!cols'] = Object.keys(lineItemRows[0] ?? {}).map((key) =>
+      key === 'No.' ? { wch: 6 } :
+      ['Parent Expense ID', 'Parent Description', 'Item Name', 'Notes'].includes(key) ? { wch: 26 } : { wch: 16 }
+    )
+    XLSX.utils.book_append_sheet(wb, lineItemsWs, 'Line Items')
+  }
 
   const monthPart = month ? getMonthName(month) : 'All-Months'
   const yearPart = year ? String(year) : 'All-Years'
