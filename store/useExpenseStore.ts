@@ -12,6 +12,7 @@ interface ExpenseStore {
   isLoading: boolean
 
   setExpenses: (expenses: Expense[]) => void
+  appendExpenses: (expenses: Expense[]) => void
   addExpense: (expense: Expense) => void
   updateExpense: (id: string, expense: Partial<Expense>) => void
   removeExpense: (id: string) => void
@@ -90,6 +91,14 @@ export const useExpenseStore = create<ExpenseStore>((set) => ({
   isLoading: false,
 
   setExpenses: (expenses) => set({ expenses: sanitizeStoreExpenses('setExpenses', expenses) }),
+  appendExpenses: (expenses) => {
+    const sanitized = sanitizeStoreExpenses('appendExpenses', expenses)
+    set((s) => {
+      const existingIds = new Set(s.expenses.map((e) => e.id))
+      const newExpenses = sanitized.filter((e) => !existingIds.has(e.id))
+      return { expenses: [...s.expenses, ...newExpenses] }
+    })
+  },
   addExpense: (expense) => {
     if (!isNonEmptyExpenseObject(expense)) {
       logMalformedStoreExpense('addExpense', expense)

@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useExpenseStore } from '@/store/useExpenseStore'
-import { getExpenses, createExpense, updateExpense, deleteExpense } from '@/services/expenses'
+import { getExpenses, getExpensesTotalCount, createExpense, updateExpense, deleteExpense } from '@/services/expenses'
+import { QUERY_LIMITS } from '@/lib/queryLimits'
 import { getBudgets, createBudget, updateBudget, deleteBudget } from '@/services/budgets'
 import { createSharedAccountExpense } from '@/services/sharedFinancialAccounts'
 import { Expense, ExpenseFormData, BudgetFormData } from '@/types'
@@ -74,21 +75,34 @@ function sanitizeHookExpenses(source: string, data: unknown): Expense[] {
 }
 
 export function useExpenses(month?: number, year?: number) {
-  const { expenses, setExpenses, addExpense, updateExpense: updateStore, removeExpense, isLoading, setLoading } = useExpenseStore()
+  const { expenses, setExpenses, appendExpenses, addExpense, updateExpense: updateStore, removeExpense, isLoading, setLoading } = useExpenseStore()
   const [error, setError] = useState<string | null>(null)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [isLoadingAll, setIsLoadingAll] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+  const [totalCount, setTotalCount] = useState(0)
+  const offsetRef = useRef(0)
   const requestSeq = useRef(0)
 
   const fetchExpenses = useCallback(async () => {
     const trace = createActionTrace('expenses.refetch', { month, year })
     const requestId = requestSeq.current + 1
     requestSeq.current = requestId
+    offsetRef.current = 0
     setLoading(true)
     setError(null)
+    setHasMore(true)
     try {
-      const data = await trace.step('supabase.select.expenses', () => getExpenses(month, year))
+      const [data, count] = await Promise.all([
+        trace.step('supabase.select.expenses', () => getExpenses(month, year, 0)),
+        trace.step('supabase.count.expenses', () => getExpensesTotalCount(month, year)),
+      ])
       const nextExpenses = sanitizeHookExpenses(`fetch:${requestId}`, data)
       if (requestId === requestSeq.current) {
         setExpenses(nextExpenses)
+        offsetRef.current = nextExpenses.length
+        setHasMore(nextExpenses.length === QUERY_LIMITS.expenses)
+        setTotalCount(count)
       }
     } catch {
       setError('Failed to load expenses')
@@ -99,6 +113,46 @@ export function useExpenses(month?: number, year?: number) {
       trace.end()
     }
   }, [month, year, setExpenses, setLoading])
+
+  const loadMore = useCallback(async () => {
+    if (isLoadingMore || isLoadingAll || !hasMore) return
+    setIsLoadingMore(true)
+    try {
+      const data = await getExpenses(month, year, offsetRef.current)
+      const nextExpenses = sanitizeHookExpenses('loadMore', data)
+      appendExpenses(nextExpenses)
+      offsetRef.current += nextExpenses.length
+      setHasMore(nextExpenses.length === QUERY_LIMITS.expenses)
+    } catch {
+      toast.error('Failed to load more expenses')
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [isLoadingMore, isLoadingAll, hasMore, month, year, appendExpenses])
+
+  const loadAllRemaining = useCallback(async () => {
+    if (isLoadingMore || isLoadingAll || !hasMore) return
+    setIsLoadingAll(true)
+    try {
+      let nextOffset = offsetRef.current
+      let morePages = true
+
+      while (morePages) {
+        const data = await getExpenses(month, year, nextOffset)
+        const nextExpenses = sanitizeHookExpenses('loadAllRemaining', data)
+        appendExpenses(nextExpenses)
+        nextOffset += nextExpenses.length
+        morePages = nextExpenses.length === QUERY_LIMITS.expenses
+      }
+
+      offsetRef.current = nextOffset
+      setHasMore(false)
+    } catch {
+      toast.error('Failed to load all matching expenses')
+    } finally {
+      setIsLoadingAll(false)
+    }
+  }, [isLoadingMore, isLoadingAll, hasMore, month, year, appendExpenses])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -181,8 +235,14 @@ export function useExpenses(month?: number, year?: number) {
   return {
     expenses,
     isLoading,
+    isLoadingMore,
+    isLoadingAll,
+    hasMore,
+    totalCount,
     error,
     refetch: fetchExpenses,
+    loadMore,
+    loadAllRemaining,
     addExpense: handleAddExpense,
     updateExpense: handleUpdateExpense,
     deleteExpense: handleDeleteExpense,

@@ -102,6 +102,7 @@ const DEBUG_EXPENSE_PIPELINE = process.env.NODE_ENV !== 'production'
 type ExpensePipelineSource =
   | 'getExpenses'
   | 'getAllExpenses'
+  | 'getAllExpensesForExport'
   | 'getExpenseById'
   | 'createExpense'
   | 'updateExpense'
@@ -455,14 +456,15 @@ export async function createObligationForContact(payload: {
   return createPersonalObligation(payload)
 }
 
-export async function getExpenses(month?: number, year?: number): Promise<Expense[]> {
+export async function getExpenses(month?: number, year?: number, offset = 0): Promise<Expense[]> {
   const supabase = createClient()
   const startedAt = DEBUG_EXPENSE_PIPELINE ? performance.now() : 0
+  const pageSize = QUERY_LIMITS.expenses
   let query = supabase
     .from('expenses')
     .select(EXPENSE_LIST_SELECT)
     .order('created_at', { ascending: false })
-    .limit(QUERY_LIMITS.expenses)
+    .range(offset, offset + pageSize - 1)
 
   if (month && year) {
     const startDate = new Date(year, month - 1, 1).toISOString()
@@ -481,12 +483,66 @@ export async function getExpenses(month?: number, year?: number): Promise<Expens
     console.debug('[expenses] service getExpenses:done', {
       month,
       year,
+      offset,
       rawCount: Array.isArray(data) ? data.length : 0,
       count: expenses.length,
       durationMs: Math.round(performance.now() - startedAt),
     })
   }
   return expenses
+}
+
+function applyExpenseDateRange<T extends { gte: (column: string, value: string) => T; lte: (column: string, value: string) => T }>(
+  query: T,
+  month?: number,
+  year?: number,
+) {
+  if (month && year) {
+    const startDate = new Date(year, month - 1, 1).toISOString()
+    const endDate = new Date(year, month, 0, 23, 59, 59).toISOString()
+    return query.gte('created_at', startDate).lte('created_at', endDate)
+  }
+
+  if (year) {
+    const startDate = new Date(year, 0, 1).toISOString()
+    const endDate = new Date(year, 11, 31, 23, 59, 59).toISOString()
+    return query.gte('created_at', startDate).lte('created_at', endDate)
+  }
+
+  return query
+}
+
+export async function getExpensesTotalCount(month?: number, year?: number): Promise<number> {
+  const supabase = createClient()
+  const query = supabase
+    .from('expenses')
+    .select('*', { count: 'exact', head: true })
+
+  const { count, error } = await applyExpenseDateRange(query, month, year)
+  if (error) throw error
+  return count ?? 0
+}
+
+export async function getAllExpensesForExport(): Promise<Expense[]> {
+  const supabase = createClient()
+  const results: Expense[] = []
+  let offset = 0
+  const pageSize = 500
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select(EXPENSE_LIST_SELECT)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + pageSize - 1)
+    if (error) throw error
+    const page = sanitizeExpenseArray('getAllExpensesForExport', data)
+    results.push(...page)
+    if (page.length < pageSize) break
+    offset += pageSize
+  }
+
+  return results
 }
 
 export async function getAllExpenses(): Promise<Expense[]> {

@@ -16,6 +16,7 @@ import {
 import { DEFAULT_CATEGORIES, isLiabilityType } from '@/lib/constants'
 import { formatCurrency, getMonthName } from '@/utils/format'
 import { exportExpensesToExcel } from '@/utils/exportExcel'
+import { getAllExpensesForExport } from '@/services/expenses'
 import { useFinancialAccounts } from '@/hooks/useFinancialAccounts'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
@@ -33,7 +34,6 @@ const MONTHS = Array.from({ length: 12 }, (_, i) => ({
 }))
 
 const YEARS = [2024, 2025, 2026].map(String)
-const MAX_RENDERED_EXPENSES = 250
 
 interface ExpenseFilters {
   categories: string[]
@@ -95,6 +95,57 @@ const SHARED_STATUS_OPTIONS = [
   { value: 'shared', label: 'Shared budget expense' },
   { value: 'personal', label: 'Personal expense' },
 ] as const
+
+function buildExpenseFilter(params: {
+  selectedYears: string[]
+  selectedMonths: string[]
+  selectedDays: string[]
+  search: string
+  appliedFilters: ExpenseFilters
+  accountMap: Map<string, { id: string; type: string }>
+}) {
+  const { selectedYears, selectedMonths, selectedDays, search, appliedFilters, accountMap } = params
+  const query = search.trim().toLowerCase()
+  return (e: Expense) => {
+    const note = typeof e.note === 'string' ? e.note : ''
+    const category = typeof e.category === 'string' ? e.category : ''
+    const sharedBudgetItem = typeof e.shared_budget_item === 'string' ? e.shared_budget_item : ''
+
+    const expDate = new Date(e.created_at)
+    const matchesYear = selectedYears.length === 0 || selectedYears.includes(String(expDate.getFullYear()))
+    const matchesMonth = selectedMonths.length === 0 || selectedMonths.includes(String(expDate.getMonth() + 1))
+    const matchesDay = selectedDays.length === 0 || selectedDays.includes(String(expDate.getDate()))
+
+    const matchesSearch =
+      !query ||
+      note.toLowerCase().includes(query) ||
+      category.toLowerCase().includes(query) ||
+      sharedBudgetItem.toLowerCase().includes(query)
+
+    const expAccount = e.account_id ? accountMap.get(e.account_id) : null
+
+    const matchesCategory = appliedFilters.categories.length === 0
+      || appliedFilters.categories.includes(e.category)
+    const matchesAccount = appliedFilters.accounts.length === 0
+      || appliedFilters.accounts.includes(e.account_id ?? '')
+    const matchesAccountType = appliedFilters.accountTypes.length === 0
+      || (!!expAccount && appliedFilters.accountTypes.includes(isLiabilityType(expAccount.type) ? 'liability' : 'asset'))
+    const matchesExpenseType = appliedFilters.expenseTypes.length === 0
+      || appliedFilters.expenseTypes.includes(deriveExpenseType(e))
+    const matchesReceipt = appliedFilters.receiptStatus.length === 0
+      || appliedFilters.receiptStatus.includes(e.has_receipt ? 'with' : 'without')
+    const matchesCreditCard = appliedFilters.creditCard.length === 0
+      || appliedFilters.creditCard.includes(expAccount?.type === 'credit' ? 'yes' : 'no')
+    const matchesSharedStatus = appliedFilters.sharedStatus.length === 0
+      || appliedFilters.sharedStatus.includes(e.is_shared_budget_expense ? 'shared' : 'personal')
+    const matchesCurrency = appliedFilters.currencies.length === 0
+      || appliedFilters.currencies.includes(e.original_currency ?? 'PHP')
+
+    return matchesYear && matchesMonth && matchesDay && matchesSearch
+      && matchesCategory && matchesAccount && matchesAccountType && matchesExpenseType
+      && matchesReceipt && matchesCreditCard && matchesSharedStatus && matchesCurrency
+  }
+}
 
 function getExpenseDebugValue(expense: unknown, key: string) {
   if (!expense || typeof expense !== 'object') {
@@ -225,10 +276,38 @@ export default function ExpensesPage() {
     })
   }, [debugExpenses])
 
-  // Multi-select years/months requires filtering across more than one
-  // month/year window, so we fetch everything once and filter client-side
-  // (consistent with the other checkbox filters, which already do this).
-  const { expenses, isLoading, refetch, addExpense, updateExpense, deleteExpense } = useExpenses()
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const dateQueryScope = useMemo(() => {
+    const year = selectedYears.length === 1 ? Number(selectedYears[0]) : undefined
+    const month = year && selectedMonths.length === 1 ? Number(selectedMonths[0]) : undefined
+
+    if ((year !== undefined && !Number.isInteger(year)) || (month !== undefined && !Number.isInteger(month))) {
+      return { month: undefined, year: undefined, isServerScoped: false }
+    }
+
+    return {
+      month,
+      year,
+      isServerScoped: selectedYears.length === 1 && selectedMonths.length <= 1,
+    }
+  }, [selectedYears, selectedMonths])
+
+  // Single month/year windows can stay paginated on the server. Multi-select
+  // date filters still use client-side filtering across the loaded pages.
+  const {
+    expenses,
+    isLoading,
+    isLoadingMore,
+    isLoadingAll,
+    hasMore,
+    totalCount,
+    loadMore,
+    loadAllRemaining,
+    refetch,
+    addExpense,
+    updateExpense,
+    deleteExpense,
+  } = useExpenses(dateQueryScope.month, dateQueryScope.year)
   const { accounts } = useFinancialAccounts()
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const [isExporting, setIsExporting] = useState(false)
@@ -408,57 +487,46 @@ export default function ExpensesPage() {
   }
 
   const activeFilterCount = useMemo(() => countActiveFilters(appliedFilters), [appliedFilters])
+  const hasClientSideDateFilter = selectedDays.length > 0 || (dateFilterCount > 0 && !dateQueryScope.isServerScoped)
+  const requiresCompleteLoadedSet =
+    deferredSearch.trim().length > 0
+    || hasClientSideDateFilter
+    || activeFilterCount > 0
 
   const filtered = useMemo(() => {
-    const query = deferredSearch.trim().toLowerCase()
-    return safeExpenses.filter((e) => {
-      const note = typeof e.note === 'string' ? e.note : ''
-      const category = typeof e.category === 'string' ? e.category : ''
-      const sharedBudgetItem = typeof e.shared_budget_item === 'string' ? e.shared_budget_item : ''
-
-      const expDate = new Date(e.created_at)
-      const matchesYear = selectedYears.length === 0 || selectedYears.includes(String(expDate.getFullYear()))
-      const matchesMonth = selectedMonths.length === 0 || selectedMonths.includes(String(expDate.getMonth() + 1))
-      const matchesDay = selectedDays.length === 0 || selectedDays.includes(String(expDate.getDate()))
-
-      const matchesSearch =
-        !query ||
-        note.toLowerCase().includes(query) ||
-        category.toLowerCase().includes(query) ||
-        sharedBudgetItem.toLowerCase().includes(query)
-
-      const expAccount = e.account_id ? accountMap.get(e.account_id) : null
-
-      // Each group: empty selection = no filter applied (OR within the group).
-      const matchesCategory = appliedFilters.categories.length === 0
-        || appliedFilters.categories.includes(e.category)
-      const matchesAccount = appliedFilters.accounts.length === 0
-        || appliedFilters.accounts.includes(e.account_id ?? '')
-      const matchesAccountType = appliedFilters.accountTypes.length === 0
-        || (!!expAccount && appliedFilters.accountTypes.includes(isLiabilityType(expAccount.type) ? 'liability' : 'asset'))
-      const matchesExpenseType = appliedFilters.expenseTypes.length === 0
-        || appliedFilters.expenseTypes.includes(deriveExpenseType(e))
-      const matchesReceipt = appliedFilters.receiptStatus.length === 0
-        || appliedFilters.receiptStatus.includes(e.has_receipt ? 'with' : 'without')
-      const matchesCreditCard = appliedFilters.creditCard.length === 0
-        || appliedFilters.creditCard.includes(expAccount?.type === 'credit' ? 'yes' : 'no')
-      const matchesSharedStatus = appliedFilters.sharedStatus.length === 0
-        || appliedFilters.sharedStatus.includes(e.is_shared_budget_expense ? 'shared' : 'personal')
-      const matchesCurrency = appliedFilters.currencies.length === 0
-        || appliedFilters.currencies.includes(e.original_currency ?? 'PHP')
-
-      // AND across groups.
-      return matchesYear && matchesMonth && matchesDay && matchesSearch
-        && matchesCategory && matchesAccount && matchesAccountType && matchesExpenseType
-        && matchesReceipt && matchesCreditCard && matchesSharedStatus && matchesCurrency
+    const predicate = buildExpenseFilter({
+      selectedYears,
+      selectedMonths,
+      selectedDays,
+      search: deferredSearch,
+      appliedFilters,
+      accountMap,
     })
+    return safeExpenses.filter(predicate)
   }, [safeExpenses, selectedYears, selectedMonths, selectedDays, deferredSearch, appliedFilters, accountMap])
 
   const totalFiltered = filtered.reduce((sum, e) => sum + e.amount, 0)
-  const visibleFiltered = useMemo(
-    () => filtered.slice(0, MAX_RENDERED_EXPENSES),
-    [filtered]
-  )
+  const isCompletingFilteredSearch = requiresCompleteLoadedSet && hasMore
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoadingMore && !isLoading) {
+          void loadMore()
+        }
+      },
+      { rootMargin: '300px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, isLoadingMore, isLoading, loadMore])
+
+  useEffect(() => {
+    if (!requiresCompleteLoadedSet || !hasMore || isLoading || isLoadingAll) return
+    void loadAllRemaining()
+  }, [requiresCompleteLoadedSet, hasMore, isLoading, isLoadingAll, loadAllRemaining])
 
   const handleOpenDetails = (expense: Expense) => {
     if (isMobile) {
@@ -482,7 +550,9 @@ export default function ExpensesPage() {
       sourceCount: expenseList.length,
       safeCount: safeExpenses.length,
       filteredCount: filtered.length,
-      renderedCount: visibleFiltered.length,
+      totalCount,
+      hasMore,
+      isLoadingAll,
     })
   }, [
     selectedYears,
@@ -494,7 +564,9 @@ export default function ExpensesPage() {
     expenseList.length,
     safeExpenses.length,
     filtered.length,
-    visibleFiltered.length,
+    totalCount,
+    hasMore,
+    isLoadingAll,
     debugExpenses,
   ])
 
@@ -513,7 +585,13 @@ export default function ExpensesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold">Expenses</h1>
-          <p className="text-sm text-muted-foreground">{filtered.length} transactions</p>
+          <p className="text-sm text-muted-foreground">
+            {filtered.length}{hasMore ? '+' : ''} transactions
+            {totalCount > 0 && !hasMore ? ` of ${totalCount}` : ''}
+          </p>
+          {isCompletingFilteredSearch && (
+            <p className="text-xs text-muted-foreground">Loading full results...</p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right">
@@ -525,11 +603,21 @@ export default function ExpensesPage() {
             size="sm"
             variant="outline"
             className="h-9 rounded-xl gap-1.5 text-xs"
-            disabled={filtered.length === 0 || isExporting}
+            disabled={isExporting || (filtered.length === 0 && !hasMore)}
             onClick={async () => {
               setIsExporting(true)
               try {
-                await exportExpensesToExcel(filtered, accounts, {
+                const allExpenses = await getAllExpensesForExport()
+                const predicate = buildExpenseFilter({
+                  selectedYears,
+                  selectedMonths,
+                  selectedDays,
+                  search,
+                  appliedFilters,
+                  accountMap,
+                })
+                const exportData = allExpenses.filter(predicate)
+                await exportExpensesToExcel(exportData, accounts, {
                   // Filename labels only make sense for a single value; multi-select
                   // exports just fall back to "All-Months"/"All-Years" in the filename.
                   month: selectedMonths.length === 1 ? Number(selectedMonths[0]) : undefined,
@@ -612,6 +700,10 @@ export default function ExpensesPage() {
 
       {isLoading ? (
         <ExpenseListSkeleton />
+      ) : filtered.length === 0 && isCompletingFilteredSearch ? (
+        <div className="py-16 text-center text-sm text-muted-foreground">
+          Loading matching transactions...
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 space-y-2">
           <p className="text-4xl">💸</p>
@@ -624,12 +716,7 @@ export default function ExpensesPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.length > visibleFiltered.length && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-300">
-              Showing the first {visibleFiltered.length} of {filtered.length} matching expenses. Narrow the filters to see fewer rows.
-            </div>
-          )}
-          {visibleFiltered.map((expense) => (
+          {filtered.map((expense) => (
             <ExpenseItem
               key={expense.id}
               expense={expense}
@@ -639,6 +726,17 @@ export default function ExpensesPage() {
               accounts={accounts}
             />
           ))}
+          <div ref={sentinelRef} />
+          {(isLoadingMore || isLoadingAll) && (
+            <div className="py-4 text-center text-sm text-muted-foreground">
+              {isLoadingAll ? 'Loading full results...' : 'Loading more...'}
+            </div>
+          )}
+          {!hasMore && filtered.length > 0 && (
+            <p className="py-4 text-center text-xs text-muted-foreground">
+              All {totalCount} transactions loaded
+            </p>
+          )}
         </div>
       )}
 
